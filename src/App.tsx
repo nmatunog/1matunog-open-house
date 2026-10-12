@@ -6,6 +6,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<GuestApp />} />
+      <Route path="/s/:eventId/:token" element={<GuestApp />} />
       <Route path="/admin/*" element={<AdminApp />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

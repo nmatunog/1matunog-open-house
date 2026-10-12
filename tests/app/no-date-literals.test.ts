@@ -22,4 +22,13 @@ describe('no hard-coded event date literals in app code', () => {
     }
     expect(hits).toEqual([]);
   });
+
+  it('station QR URLs are built from window.location.origin, not a hard-coded host', () => {
+    const print = readFileSync(join(process.cwd(), 'src/admin/PrintStationCards.tsx'), 'utf8');
+    const stations = readFileSync(join(process.cwd(), 'src/lib/stations.ts'), 'utf8');
+    expect(print).toContain('window.location.origin');
+    expect(print).not.toMatch(/https:\/\/[a-z0-9.-]+/i);
+    expect(stations).toContain('origin.replace');
+    expect(stations).not.toMatch(/https:\/\/[a-z0-9.-]+/i);
+  });
 });

@@ -105,6 +105,25 @@ export type PassportSession = {
   personId?: string;
 };
 
+export type DeviceCheckin = {
+  eventId: string;
+  personId: string;
+  name: string;
+};
+
+export type StationStamp = {
+  id: string;
+  boothId: string;
+  personId: string;
+  anonUid: string;
+  stampKeyId: string;
+};
+
+export type PendingStationScan = {
+  eventId: string;
+  token: string;
+};
+
 export type AdminProfile = {
   uid: string;
   email: string;

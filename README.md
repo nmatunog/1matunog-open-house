@@ -7,13 +7,15 @@ This is a new app. It does **not** use the old admin password. Admins sign in wi
 ## What guests see
 
 1. Welcome
-2. Your details (Privacy Notice agreement required; marketing follow-up optional)
-3. Passport stamps (saved on this phone if they refresh)
+2. Your details (Privacy Notice agreement required; marketing follow-up optional) — this is the check-in
+3. Scan the printed QR at each station (or type the small backup code). Stamps are saved on this phone.
 4. Done — show this at the rewards counter
+
+A phone-camera scan of `/s/<eventId>/<token>` opens the app, checks the guest in if needed, then stamps that station.
 
 ## What admins see
 
-Sign in with Google → Today (who checked in, who can win now, Start Draw) → projector Draw (first name + last initial + agent only) → Claimed or Not here → History. New event form prefills booth names from the last event and issues new booth codes.
+Sign in with Google → Today (who checked in, stamps per station, who can win now, Start Draw, **Print station QR cards**) → projector Draw (first name + last initial + agent only) → Claimed or Not here → History. New event form prefills station names from the last event and issues new QR tokens and backup codes. Print one A5 card per station and put it at the booth.
 
 ## Local development
 

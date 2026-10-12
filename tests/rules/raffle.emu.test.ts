@@ -27,11 +27,20 @@ beforeEach(async () => {
         email: `${id}@example.com`,
         phone: `+63917123456${id.slice(-1)}`,
         invitedBy: 'Ana',
-        stampsCompleted: 6,
+        stampsCompleted: 0,
         checkedInAt: serverTimestamp(),
         anonUid: id,
         consentVersion: 'placeholder-1',
       });
+      for (let i = 1; i <= 6; i += 1) {
+        await setDoc(doc(db, 'oh_events', 'E', 'stamps', `${id}_booth-${i}`), {
+          boothId: `booth-${i}`,
+          anonUid: id,
+          personId: id,
+          stampedAt: serverTimestamp(),
+          stampKeyId: 'a'.repeat(64),
+        });
+      }
     }
   });
 });

@@ -21,13 +21,15 @@ export function isEligibleToWin(
   checkin: Checkin,
   event: OhEvent,
   winner: WinnerLock | undefined,
+  stampCount: number,
 ): boolean {
   const checkedInAt = toDate(checkin.checkedInAt);
   if (!checkedInAt) return false;
   if (!isInWindow(checkedInAt, toDate(event.raffle.opensAt), toDate(event.raffle.closesAt))) {
     return false;
   }
-  if (checkin.stampsCompleted < event.raffle.minStamps) return false;
+  // Count stamp documents, never the self-reported check-in counter.
+  if (stampCount < event.raffle.minStamps) return false;
   if (!winner) return true;
   if (winner.status === 'no_show' || winner.status === 'pending' || winner.status === 'void') {
     return false;
@@ -40,8 +42,11 @@ export function eligiblePool(
   checkins: Checkin[],
   event: OhEvent,
   winners: Map<string, WinnerLock>,
+  stampCountByPerson: Map<string, number>,
 ): Checkin[] {
-  return checkins.filter((c) => isEligibleToWin(c, event, winners.get(c.personId)));
+  return checkins.filter((c) =>
+    isEligibleToWin(c, event, winners.get(c.personId), stampCountByPerson.get(c.personId) ?? 0),
+  );
 }
 
 export function statusLabel(status: DrawStatus): string {

@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { projectorName } from './displayName';
 import { eligiblePool } from './eligibility';
+import { countStampsByPerson, parseStamp } from './stations';
 import type { Checkin, Draw, OhEvent, WinnerLock } from '../types';
 import { toDate } from './time';
 import { Timestamp } from 'firebase/firestore';
@@ -99,16 +100,20 @@ export async function loadLivePool(
   const eventSnap = await getDoc(doc(db, 'oh_events', eventId));
   if (!eventSnap.exists()) throw new Error('Event not found');
   const event = asEvent(eventSnap.id, eventSnap.data() as Record<string, unknown>);
-  const [checkinSnaps, winnerSnaps] = await Promise.all([
+  const [checkinSnaps, winnerSnaps, stampSnaps] = await Promise.all([
     getDocs(collection(db, 'oh_events', eventId, 'checkins')),
     getDocs(collection(db, 'oh_events', eventId, 'winners')),
+    getDocs(collection(db, 'oh_events', eventId, 'stamps')),
   ]);
   const checkins = checkinSnaps.docs.map((d) => parseCheckin(d.id, d.data() as Record<string, unknown>));
   const winners = new Map<string, WinnerLock>();
   for (const d of winnerSnaps.docs) {
     winners.set(d.id, parseWinner(d.id, d.data() as Record<string, unknown>));
   }
-  return { event, checkins, winners, pool: eligiblePool(checkins, event, winners) };
+  const stampCounts = countStampsByPerson(
+    stampSnaps.docs.map((d) => parseStamp(d.id, d.data() as Record<string, unknown>)),
+  );
+  return { event, checkins, winners, pool: eligiblePool(checkins, event, winners, stampCounts) };
 }
 
 export type DrawResult =
