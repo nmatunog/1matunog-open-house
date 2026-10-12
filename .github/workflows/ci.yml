@@ -1,0 +1,47 @@
+name: CI
+
+# Never deploy. This workflow only typechecks, lints, and tests (including
+# Firestore rules on the emulator). Nilo is the only person who may deploy.
+
+on:
+  push:
+    branches: [main, 'cursor/**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Guard against live Firebase deploys in CI
+        run: |
+          if grep -RIn --include='*.yml' --include='*.yaml' --include='*.json' -E 'run:.*firebase[[:space:]]+deploy' .github package.json; then
+            echo 'CI must never deploy to the live Firebase project.'
+            exit 1
+          fi
+          node -e "const p=require('./package.json'); if (/firebase\\s+deploy/.test(JSON.stringify(p.scripts||{}))) process.exit(1)"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Firestore emulator rules + raffle tests
+        run: npm run test:emu
+      - name: Production build (dummy public web ids only)
+        env:
+          VITE_FIREBASE_API_KEY: test
+          VITE_FIREBASE_AUTH_DOMAIN: localhost
+          VITE_FIREBASE_PROJECT_ID: cma-dashboard-01
+          VITE_FIREBASE_STORAGE_BUCKET: cma-dashboard-01.appspot.com
+          VITE_FIREBASE_MESSAGING_SENDER_ID: '0'
+          VITE_FIREBASE_APP_ID: test
+        run: npm run build

@@ -1,0 +1,233 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ---- Open House (OH) ----
+    function ohSignedIn() { return request.auth != null; }
+    function ohEmail() { return request.auth.token.email.lower(); }
+    function ohIsAdmin() {
+      return ohSignedIn() && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/oh_admins/$(ohEmail()))
+        && get(/databases/$(database)/documents/oh_admins/$(ohEmail())).data.active == true
+        && get(/databases/$(database)/documents/oh_admins/$(ohEmail())).data.role == 'admin';
+    }
+    function ohIsViewer() {
+      return ohIsAdmin() || (ohSignedIn() && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/oh_admins/$(ohEmail()))
+        && get(/databases/$(database)/documents/oh_admins/$(ohEmail())).data.active == true);
+    }
+    function ohEvent(eid) { return get(/databases/$(database)/documents/oh_events/$(eid)).data; }
+
+    match /oh_admins/{email} { allow read: if ohSignedIn() && ohEmail() == email; allow write: if false; } // console-only
+    match /oh_config/public { allow read: if true; allow write: if ohIsAdmin(); }
+    match /oh_people/{pid}     { allow read: if ohIsViewer(); allow write: if ohIsAdmin(); }
+    match /oh_phoneIndex/{p}   { allow read: if ohIsViewer(); allow write: if ohIsAdmin(); }
+
+    match /oh_events/{eid} {
+      // guests need name, booths (code hashes), status and window only
+      allow read: if true;
+      allow write: if ohIsAdmin();
+
+      match /checkins/{pid} {
+        allow read: if ohIsViewer();
+        allow create: if ohSignedIn()
+          && ohEvent(eid).status == 'open'
+          && request.time >= ohEvent(eid).checkInOpensAt && request.time <= ohEvent(eid).checkInClosesAt
+          && request.resource.data.keys().hasOnly(['name','email','phone','invitedBy','stampsCompleted','checkedInAt','anonUid','consentVersion'])
+          && request.resource.data.anonUid == request.auth.uid
+          && request.resource.data.checkedInAt == request.time
+          && request.resource.data.name is string && request.resource.data.name.size() > 1 && request.resource.data.name.size() <= 80
+          && request.resource.data.email is string && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$') && request.resource.data.email.size() <= 120
+          && request.resource.data.phone is string && request.resource.data.phone.matches('^\\+639[0-9]{9}$')
+          && request.resource.data.invitedBy is string && request.resource.data.invitedBy.size() <= 80
+          && request.resource.data.stampsCompleted is int && request.resource.data.stampsCompleted >= 0 && request.resource.data.stampsCompleted <= 20
+          && request.resource.data.consentVersion is string;
+        allow update, delete: if ohIsAdmin();     // create-only for guests => one entry per person per event
+      }
+      match /draws/{n}    { allow read: if ohIsViewer(); allow create, update: if ohIsAdmin(); allow delete: if false; }
+      match /winners/{pid} {
+        allow read: if ohIsViewer();
+        allow create: if ohIsAdmin() && !exists(/databases/$(database)/documents/oh_events/$(eid)/winners/$(pid));
+        allow update: if ohIsAdmin(); // e.g. mark no_show releases lock: status field
+        allow delete: if false;
+      }
+    }
+    // Legacy app: lock down. Admins can still read/export the old data for migration.
+    match /artifacts/{appId}/public/data/{document=**} {
+      allow read: if ohIsViewer();
+      allow write: if ohIsAdmin();
+    }
+    // ---- end OH ----  (leader-dashboard rules follow, unchanged)
+
+    // Helper function to check if current user is admin or superuser
+    // Only use AFTER user can read their own document (no circular dependency)
+    function isAdmin() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superuser') &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive != false);
+    }
+    
+    // Helper function to check if current user is admin-viewer (read-only access)
+    // Only use AFTER user can read their own document (no circular dependency)
+    function isAdminViewer() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin-viewer' &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive != false);
+    }
+    
+    // Helper function to check if current user is a leader (ADD, SUM, UM)
+    // Only use AFTER user can read their own document (no circular dependency)
+    function isLeader() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'leader' &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive != false);
+    }
+    
+    // Helper function to get user's agency name
+    // Only use AFTER user can read their own document (no circular dependency)
+    function getUserAgency() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.agencyName;
+    }
+    
+    // Helper function to check if two agency names match (case-insensitive)
+    // Note: Firestore rules don't support .toUpperCase() directly, so we check common variations
+    function agencyNamesMatch(name1, name2) {
+      // Exact match
+      return name1 == name2 ||
+             // Case-insensitive match (convert both to uppercase for comparison)
+             (name1.toUpperCase().trim() == name2.toUpperCase().trim());
+    }
+    // Helper function to check if current user is superuser
+    function isSuperuser() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superuser' &&
+             (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive != false);
+    }
+    
+    // Helper function to check if current user is active
+    // Only use AFTER user can read their own document (no circular dependency)
+    function isActive() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // CRITICAL: Allow users to read their own data FIRST (no helper functions)
+      // This must come before admin checks to avoid circular dependency
+      allow read: if request.auth != null && request.auth.uid == userId;
+      
+      // Admins and viewers can read all users (viewers have read-only access)
+      allow read: if isAdmin() || isAdminViewer();
+      
+      // TODO (separate ticket, not OH-P1): this create rule lets an unauthenticated
+      // client create a user doc with any role, including admin/superuser
+      // (privilege escalation). Copied verbatim from nmatunog/cma-leader-dashboard;
+      // do not change behavior here.
+      // Allow users to create their own user document (for self-signup)
+      // Allow setup page to create first admin (request.auth == null for initial setup)
+      // Allow admins to create users
+      // BUT: Only superusers can create admin or superuser roles
+      allow create: if request.auth == null || 
+                      (request.auth != null && request.auth.uid == userId) ||
+                      (isAdmin() && 
+                       (request.resource.data.role != 'admin' && request.resource.data.role != 'superuser')) ||
+                      (isSuperuser() && 
+                       (request.resource.data.role == 'admin' || request.resource.data.role == 'superuser'));
+      
+      // Only superusers can update users to admin or superuser roles
+      // Regular admins can update other fields
+      allow update: if isSuperuser() ||
+                      (isAdmin() && 
+                       request.resource.data.role != 'admin' && 
+                       request.resource.data.role != 'superuser' &&
+                       resource.data.role != 'admin' && 
+                       resource.data.role != 'superuser');
+      
+      allow delete: if isAdmin();
+      
+      // Users can update their own profile (limited fields)
+      // Note: No isActive() check here to avoid circular dependency
+      allow update: if request.auth != null && 
+                    request.auth.uid == userId &&
+                    // Only allow updating specific fields
+                    request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(['name', 'unitManager']);
+    }
+    
+    // Strategic planning goals collection
+    match /strategic_planning_goals/{goalId} {
+      // Users can read their own goals
+      allow read: if request.auth != null && 
+                 isActive() &&
+                 resource.data.userId == request.auth.uid;
+      
+      // Users can update/delete their own goals
+      allow update, delete: if request.auth != null && 
+                           isActive() &&
+                           resource.data.userId == request.auth.uid;
+      
+      // Users can create their own goals
+      allow create: if request.auth != null && 
+                   isActive() &&
+                   request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read/write all goals
+      allow read, write: if isAdmin() && isActive();
+      
+      // Admin-viewers can read all goals (read-only access)
+      allow read: if isAdminViewer() && isActive();
+      
+      // Leaders (ADD, SUM, UM) can read goals from their agency
+      // Use helper function for case-insensitive matching
+      allow read: if isLeader() && isActive() && 
+                  agencyNamesMatch(resource.data.agencyName, getUserAgency());
+      
+      // Leaders (ADD, SUM, UM) can create their own goals
+      allow create: if isLeader() && isActive() && 
+                   request.resource.data.userId == request.auth.uid;
+      
+      // Leaders (ADD, SUM, UM) can update/delete their own goals
+      allow update, delete: if isLeader() && isActive() && 
+                           resource.data.userId == request.auth.uid;
+    }
+    
+    // Data collection (dashboard data)
+    match /data/{document=**} {
+      // Authenticated users and viewers can read
+      allow read: if request.auth != null && isActive();
+      
+      // Only admins can write (viewers cannot edit)
+      allow write: if isAdmin() && isActive();
+    }
+    
+    // Config collection
+    match /config/{document=**} {
+      // Only admins can read/write config
+      allow read, write: if isAdmin() && isActive();
+    }
+    
+    // Agencies collection
+    match /agencies/{document=**} {
+      // Allow public read access (needed for signup page dropdowns before authentication)
+      allow read: if true;
+      
+      // Only admins can write (add/update/delete agencies)
+      allow write: if isAdmin() && isActive();
+    }
+    
+    // Organizational hierarchy collection
+    match /organizational_hierarchy/{document=**} {
+      // Allow public read access (needed for signup page dropdowns before authentication)
+      allow read: if true;
+      
+      // Only admins can write (initialize/import hierarchy data)
+      allow write: if isAdmin() && isActive();
+    }
+  }
+}
