@@ -22,6 +22,19 @@ Sign in with Google → Today (who checked in, who can win now, Start Draw) → 
 3. `npm run dev` — guest at `/`, admin at `/admin`
 4. Optional emulators: `npm run emulators` and set `VITE_USE_EMULATORS=true`
 
+## Deploy on Netlify
+
+Set these environment variable **names** in the Netlify site settings (values come from Firebase Project settings; do not commit them):
+
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+
+Add the Netlify domain to Firebase Authentication authorized domains.
+
 ## Tests
 
 ```bash

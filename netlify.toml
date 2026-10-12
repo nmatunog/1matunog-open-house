@@ -1,0 +1,13 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# SPA fallback. Guest `/` and admin `/admin/*` (including the projector draw)
+# share index.html; Netlify still serves real files when they exist.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
