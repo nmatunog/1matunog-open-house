@@ -1,6 +1,15 @@
 import { doc, getDoc, serverTimestamp, setDoc, type Firestore } from 'firebase/firestore';
 import { lookupStampKey, stampDocId } from '../lib/stations';
 
+/** Scan-to-stamp waits for check-in on this phone, then applies the pending station. */
+export function needsCheckInBeforeStamp(args: {
+  devicePersonId?: string;
+  savedPersonId?: string;
+  submitted?: boolean;
+}): boolean {
+  return !args.devicePersonId && !args.savedPersonId && !args.submitted;
+}
+
 export function stampConfirmCopy(
   kind: 'stamped' | 'already',
   stationNo: number,

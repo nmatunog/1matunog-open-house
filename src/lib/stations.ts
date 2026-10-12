@@ -55,10 +55,35 @@ export function stampDocId(anonUid: string, boothId: string): string {
   return `${anonUid}_${boothId}`;
 }
 
-/** QR payload. Call with window.location.origin — never a hard-coded host. */
+/** Live guest site. Printed cards always encode this — never localhost, a preview, or Firebase Hosting. */
+export const PRODUCTION_SITE_ORIGIN = 'https://aia-openhouse.netlify.app';
+
+export function isUnsafeQrOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1') return true;
+    if (host.endsWith('.firebaseapp.com') || host.endsWith('.web.app')) return true;
+    if (host !== 'aia-openhouse.netlify.app') return true;
+    return url.protocol !== 'https:';
+  } catch {
+    return true;
+  }
+}
+
+export function printedStationOrigin(candidate?: string): string {
+  if (candidate && !isUnsafeQrOrigin(candidate)) return candidate.replace(/\/+$/, '');
+  return PRODUCTION_SITE_ORIGIN;
+}
+
+/** QR payload helper. Printed cards must call printedStationQrUrl, not a local origin. */
 export function stationQrUrl(origin: string, eventId: string, token: string): string {
   const base = origin.replace(/\/+$/, '');
   return `${base}/s/${encodeURIComponent(eventId)}/${encodeURIComponent(token)}`;
+}
+
+export function printedStationQrUrl(eventId: string, token: string): string {
+  return stationQrUrl(PRODUCTION_SITE_ORIGIN, eventId, token);
 }
 
 export function parseStationPath(pathname: string): { eventId: string; token: string } | null {

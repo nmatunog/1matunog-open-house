@@ -8,6 +8,11 @@
 # SPA fallback. Guest `/`, station scan `/s/:eventId/:token`, and admin `/admin/*`
 # (including the projector draw and print cards) share index.html.
 [[redirects]]
+  from = "/s/*"
+  to = "/index.html"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

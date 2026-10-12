@@ -23,12 +23,14 @@ describe('no hard-coded event date literals in app code', () => {
     expect(hits).toEqual([]);
   });
 
-  it('station QR URLs are built from window.location.origin, not a hard-coded host', () => {
+  it('printed station QR cards encode the live Netlify guest URL', () => {
     const print = readFileSync(join(process.cwd(), 'src/admin/PrintStationCards.tsx'), 'utf8');
     const stations = readFileSync(join(process.cwd(), 'src/lib/stations.ts'), 'utf8');
-    expect(print).toContain('window.location.origin');
-    expect(print).not.toMatch(/https:\/\/[a-z0-9.-]+/i);
-    expect(stations).toContain('origin.replace');
-    expect(stations).not.toMatch(/https:\/\/[a-z0-9.-]+/i);
+    const netlify = readFileSync(join(process.cwd(), 'netlify.toml'), 'utf8');
+    expect(print).toContain('printedStationQrUrl');
+    expect(print).not.toContain('window.location.origin');
+    expect(stations).toContain('https://aia-openhouse.netlify.app');
+    expect(stations).not.toMatch(/localhost|firebaseapp\.com|\.web\.app/);
+    expect(netlify).toMatch(/from\s*=\s*"\/s\/\*/);
   });
 });

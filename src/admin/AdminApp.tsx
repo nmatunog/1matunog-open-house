@@ -763,16 +763,24 @@ function NewEventScreen({
         <p className="font-semibold">Stations (new QR codes each event — print the cards from Today)</p>
         {booths.map((b, i) => (
           <div key={b.id} className="grid grid-cols-2 gap-2">
-            <input
-              className={fieldClass()}
-              value={b.name}
-              onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-            />
-            <input
-              className={fieldClass()}
-              value={b.code}
-              onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))}
-            />
+            <label className="text-sm">
+              Station {i + 1} name
+              <input
+                className={`${fieldClass()} mt-1`}
+                value={b.name}
+                onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+              />
+            </label>
+            <label className="text-sm">
+              Backup code if a camera will not scan
+              <input
+                className={`${fieldClass()} mt-1`}
+                value={b.code}
+                onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))}
+                autoCapitalize="characters"
+                autoComplete="off"
+              />
+            </label>
           </div>
         ))}
       </MoreDetails>

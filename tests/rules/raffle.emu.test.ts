@@ -1,7 +1,7 @@
 import { assertSucceeds } from '@firebase/rules-unit-testing';
 import { collection, doc, getDocs, serverTimestamp, setDoc } from 'firebase/firestore';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { drawAndLock, resolvePendingDraw } from '../../src/lib/raffle';
+import { drawAndLock, loadLivePool, resolvePendingDraw } from '../../src/lib/raffle';
 import { adminAuth, makeEnv, seedOhAdmin, seedOpenEvent, type RulesTestEnvironment } from './helpers';
 
 let env: RulesTestEnvironment;
@@ -62,6 +62,36 @@ describe('raffle integrity on emulator', () => {
     const draws = await getDocs(collection(a, 'oh_events', 'E', 'draws'));
     const pending = draws.docs.filter((d) => d.data().status === 'pending');
     expect(pending).toHaveLength(1);
+  });
+
+  it('stamps from another event never count toward minStamps', async () => {
+    await seedOpenEvent(env, 'F');
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'oh_events', 'E', 'checkins', 'pOther'), {
+        name: 'Other Event Guest',
+        email: 'other@example.com',
+        phone: '+639171234560',
+        invitedBy: 'Ana',
+        stampsCompleted: 6,
+        checkedInAt: serverTimestamp(),
+        anonUid: 'pOther',
+        consentVersion: 'placeholder-1',
+      });
+      for (let i = 1; i <= 6; i += 1) {
+        await setDoc(doc(db, 'oh_events', 'F', 'stamps', `pOther_booth-${i}`), {
+          boothId: `booth-${i}`,
+          anonUid: 'pOther',
+          personId: 'pOther',
+          stampedAt: serverTimestamp(),
+          stampKeyId: 'b'.repeat(64),
+        });
+      }
+    });
+    const db = env.authenticatedContext('nilo', adminAuth()).firestore();
+    const live = await loadLivePool(db, 'E');
+    expect(live.pool.map((p) => p.personId)).not.toContain('pOther');
+    expect(live.checkins.map((p) => p.personId)).toContain('pOther');
   });
 
   it('Not here → draw again logs a no-show and picks someone else', async () => {

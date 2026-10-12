@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stampConfirmCopy } from '../../src/guest/applyStamp';
+import { needsCheckInBeforeStamp, stampConfirmCopy } from '../../src/guest/applyStamp';
 
 describe('guest stamp confirmation copy', () => {
   it('says Station N stamped with progress', () => {
@@ -14,5 +14,12 @@ describe('guest stamp confirmation copy', () => {
       title: 'Already stamped',
       subtitle: 'Station 3 · 4 of 6',
     });
+  });
+
+  it('asks for check-in first when this phone has no person yet, then stamps after', () => {
+    expect(needsCheckInBeforeStamp({})).toBe(true);
+    expect(needsCheckInBeforeStamp({ devicePersonId: 'p1' })).toBe(false);
+    expect(needsCheckInBeforeStamp({ savedPersonId: 'p1' })).toBe(false);
+    expect(needsCheckInBeforeStamp({ submitted: true })).toBe(false);
   });
 });

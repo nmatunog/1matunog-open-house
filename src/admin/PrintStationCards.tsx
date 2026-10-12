@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import { SafeText } from '../components/SafeText';
 import { getFirebase } from '../firebase/app';
 import { formatManilaDate } from '../lib/time';
-import { ensureStationMaterials, stationQrUrl, type StationSecret } from '../lib/stations';
+import { ensureStationMaterials, printedStationQrUrl, type StationSecret } from '../lib/stations';
 import type { OhEvent } from '../types';
 
 type Card = {
@@ -129,7 +129,6 @@ export function StationPrintCard({
 }
 
 async function buildCards(event: OhEvent, secrets: StationSecret[]): Promise<Card[]> {
-  const origin = window.location.origin;
   const byBooth = new Map(secrets.map((s) => [s.boothId, s]));
   const cards: Card[] = [];
   for (let i = 0; i < event.booths.length; i += 1) {
@@ -137,7 +136,7 @@ async function buildCards(event: OhEvent, secrets: StationSecret[]): Promise<Car
     if (!booth) continue;
     const secret = byBooth.get(booth.id);
     if (!secret?.token) continue;
-    const url = stationQrUrl(origin, event.id, secret.token);
+    const url = printedStationQrUrl(event.id, secret.token);
     const qrDataUrl = await QRCode.toDataURL(url, {
       margin: 1,
       width: 512,

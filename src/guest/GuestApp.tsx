@@ -30,7 +30,7 @@ import { formatManilaDate } from '../lib/time';
 import { stampDocId } from '../lib/stations';
 import type { GuestDetails, OhEvent, PassportSession } from '../types';
 import { PrivacyNotice } from './PrivacyNotice';
-import { applyStationStamp, stampConfirmCopy } from './applyStamp';
+import { applyStationStamp, needsCheckInBeforeStamp, stampConfirmCopy } from './applyStamp';
 
 type Step = 'welcome' | 'details' | 'passport' | 'done' | 'unavailable';
 
@@ -127,7 +127,13 @@ export function GuestApp() {
       }
       if (scanToken) {
         savePendingStationScan({ eventId: loaded.id, token: scanToken });
-        if (!device?.personId && !saved?.personId && !saved?.submitted) {
+        if (
+          needsCheckInBeforeStamp({
+            devicePersonId: device?.personId,
+            savedPersonId: saved?.personId,
+            submitted: saved?.submitted,
+          })
+        ) {
           setScanNote('First a quick check-in, then we will stamp this station.');
           setStep('details');
         }
@@ -693,7 +699,7 @@ function Shell({ children }: { children: ReactNode }) {
 
 function Header({ subtitle }: { subtitle: string }) {
   return (
-    <div className="bg-brand p-8 text-center text-white shadow-md">
+    <div className="bg-brand p-6 text-center text-white shadow-md sm:p-8">
       <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">OPEN HOUSE</h1>
       <h2 className="text-xl font-light uppercase tracking-[0.2em] opacity-90">Passport</h2>
       <div className="mx-auto my-3 h-1 w-12 rounded-full bg-white/30" />

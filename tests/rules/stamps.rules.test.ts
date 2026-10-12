@@ -1,5 +1,14 @@
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc } from 'firebase/firestore';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore';
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
 import { stampKeyId } from '../../src/lib/stations';
 import {
@@ -7,6 +16,7 @@ import {
   makeEnv,
   seedOhAdmin,
   seedOpenEvent,
+  Timestamp,
   type RulesTestEnvironment,
 } from './helpers';
 
@@ -110,6 +120,57 @@ describe('OH-P1.1 station stamps', () => {
     await assertFails(
       setDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1'), await validStamp('E', TOKEN_E, 'anon1')),
     );
+  });
+
+  it('stamp outside the check-in window is denied', async () => {
+    await seedOpenEvent(env, 'E', {
+      checkInOpensAt: Timestamp.fromMillis(0),
+      checkInClosesAt: Timestamp.fromMillis(1000),
+    });
+    const db = env.authenticatedContext('anon1').firestore();
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'oh_events', 'E', 'checkins', 'P'), validCheckin('anon1'));
+    });
+    await assertFails(
+      setDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1'), await validStamp('E', TOKEN_E, 'anon1')),
+    );
+  });
+
+  it('extra stamp fields are denied', async () => {
+    const db = env.authenticatedContext('anon1').firestore();
+    await assertSucceeds(setDoc(doc(db, 'oh_events', 'E', 'checkins', 'P'), validCheckin('anon1')));
+    await assertFails(
+      setDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1'), {
+        ...(await validStamp('E', TOKEN_E, 'anon1')),
+        sneaky: true,
+      }),
+    );
+  });
+
+  it('wrong anonUid is denied', async () => {
+    const db = env.authenticatedContext('anon1').firestore();
+    await assertSucceeds(setDoc(doc(db, 'oh_events', 'E', 'checkins', 'P'), validCheckin('anon1')));
+    const payload = await validStamp('E', TOKEN_E, 'anon2');
+    await assertFails(setDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1'), payload));
+    await assertFails(setDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon2_booth-1'), payload));
+  });
+
+  it('stamp without a check-in is denied', async () => {
+    const db = env.authenticatedContext('anon1').firestore();
+    await assertFails(
+      setDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1'), await validStamp('E', TOKEN_E, 'anon1')),
+    );
+  });
+
+  it('guests cannot update or delete stamps or write stamp counts on the check-in', async () => {
+    const db = env.authenticatedContext('anon1').firestore();
+    await assertSucceeds(setDoc(doc(db, 'oh_events', 'E', 'checkins', 'P'), validCheckin('anon1')));
+    await assertSucceeds(
+      setDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1'), await validStamp('E', TOKEN_E, 'anon1')),
+    );
+    await assertFails(updateDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1'), { boothId: 'booth-9' }));
+    await assertFails(deleteDoc(doc(db, 'oh_events', 'E', 'stamps', 'anon1_booth-1')));
+    await assertFails(updateDoc(doc(db, 'oh_events', 'E', 'checkins', 'P'), { stampsCompleted: 6 }));
   });
 
   it('guests can get a stampKey by id but cannot list tokens or stampKeys', async () => {

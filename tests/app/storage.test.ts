@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   clearDeviceCheckin,
   clearPassportSession,
+  clearPendingStationScan,
   loadDeviceCheckin,
   loadPassportSession,
+  loadPendingStationScan,
   saveDeviceCheckin,
   savePassportSession,
+  savePendingStationScan,
 } from '../../src/lib/storage';
 import type { PassportSession } from '../../src/types';
 
@@ -52,5 +55,12 @@ describe('refresh-keeps-stamps', () => {
     expect(loadDeviceCheckin('evt-1')?.personId).toBe('p1');
     clearDeviceCheckin('evt-1');
     expect(loadDeviceCheckin('evt-1')).toBeNull();
+  });
+
+  it('keeps a scanned station until check-in finishes', () => {
+    savePendingStationScan({ eventId: 'evt-1', token: 'deadbeef' });
+    expect(loadPendingStationScan()).toEqual({ eventId: 'evt-1', token: 'deadbeef' });
+    clearPendingStationScan();
+    expect(loadPendingStationScan()).toBeNull();
   });
 });
