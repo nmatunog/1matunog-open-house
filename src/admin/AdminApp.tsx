@@ -38,7 +38,7 @@ type Screen = 'today' | 'list' | 'guest' | 'history' | 'new' | 'more';
 export function AdminApp() {
   const configOk = firebaseConfigReady(readFirebaseWebConfig());
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<AdminProfile | null | 'missing'>(null);
+  const [profile, setProfile] = useState<AdminProfile | null | 'missing' | 'unverified'>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState('');
 
@@ -49,6 +49,11 @@ export function AdminApp() {
       setUser(next);
       if (!next || !next.email) {
         setProfile(null);
+        setAuthReady(true);
+        return;
+      }
+      if (next.emailVerified !== true) {
+        setProfile('unverified');
         setAuthReady(true);
         return;
       }
@@ -104,6 +109,23 @@ export function AdminApp() {
           <Link to="/" className="block text-center text-sm text-gray-500 underline">
             Back to guest passport
           </Link>
+        </div>
+      </AdminShell>
+    );
+  }
+
+  if (profile === 'unverified') {
+    return (
+      <AdminShell>
+        <div className="mx-auto max-w-md p-6 space-y-4">
+          <h1 className="text-2xl font-black">Verify your Google email</h1>
+          <p>
+            You signed in as {user.email}, but that Google account has not verified the email address.
+            Open House admin access needs a verified Google email plus an active listing in oh_admins.
+          </p>
+          <button type="button" className="rounded-xl bg-gray-900 px-4 py-2 text-white" onClick={() => void signOut(getFirebase().auth)}>
+            Sign out
+          </button>
         </div>
       </AdminShell>
     );
@@ -267,6 +289,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             pending={pending ?? null}
             onPick={setEventId}
             onOpenDraw={() => navigate(`/admin/draw?event=${event.id}`)}
+            onGuestList={() => setScreen('list')}
             flags={flags}
             syncNote={syncNote}
           />
@@ -333,6 +356,7 @@ function TodayScreen({
   pending,
   onPick,
   onOpenDraw,
+  onGuestList,
   flags,
   syncNote,
 }: {
@@ -345,6 +369,7 @@ function TodayScreen({
   pending: Draw | null;
   onPick: (id: string) => void;
   onOpenDraw: () => void;
+  onGuestList: () => void;
   flags: DuplicateFlag[];
   syncNote: string;
 }) {
@@ -385,6 +410,9 @@ function TodayScreen({
         Start Draw
       </button>
       <div className="flex flex-wrap gap-2 text-sm">
+        <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={onGuestList}>
+          Guest list
+        </button>
         <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={() => downloadCsv(`checkins-${event.id}.csv`, checkinsCsv(event.id, checkins))}>
           Download check-ins
         </button>
@@ -607,7 +635,6 @@ function NewEventScreen({
         lastDrawNo: 0,
         createdAt: serverTimestamp(),
       });
-      await setDoc(doc(getFirebase().db, 'oh_config', 'public'), { currentEventId: id }, { merge: true });
       onSaved(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
@@ -672,6 +699,9 @@ function NewEventScreen({
           </div>
         ))}
       </MoreDetails>
+      <p className="text-sm text-gray-600">
+        Saving does not switch the public guest event. On Today, use “Make this the public event” when you are ready.
+      </p>
       <FieldError message={error} />
       <button type="button" disabled={busy} className="w-full rounded-2xl bg-brand py-3 font-bold text-white" onClick={() => void save()}>
         {busy ? 'Saving…' : 'Save event'}

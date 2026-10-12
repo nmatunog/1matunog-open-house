@@ -14,6 +14,16 @@ import { parseCheckin } from './raffle';
 
 const BATCH_LIMIT = 400;
 
+/** Phone index is never auto-merged onto a different personId. */
+export function phoneIndexWriteAction(
+  existingOwnerId: string | undefined,
+  checkinPersonId: string,
+): 'create' | 'keep' | 'skip-collision' {
+  if (!existingOwnerId) return 'create';
+  if (existingOwnerId === checkinPersonId) return 'keep';
+  return 'skip-collision';
+}
+
 export async function syncEventCheckins(
   db: Firestore,
   eventId: string,
@@ -46,19 +56,21 @@ async function planPersonWrite(
   const phoneRef = doc(db, 'oh_phoneIndex', checkin.phone);
   const [personSnap, phoneSnap] = await Promise.all([getDoc(personRef), getDoc(phoneRef)]);
 
+  const existingOwnerId = phoneSnap.exists()
+    ? String((phoneSnap.data() as { personId?: string }).personId ?? '')
+    : undefined;
+  const phoneAction = phoneIndexWriteAction(existingOwnerId || undefined, checkin.personId);
+
   let flag: DuplicateFlag | null = null;
-  if (phoneSnap.exists()) {
-    const otherId = String((phoneSnap.data() as { personId?: string }).personId ?? '');
-    if (otherId && otherId !== checkin.personId) {
-      const other = await getDoc(doc(db, 'oh_people', otherId));
-      flag = {
-        phone: checkin.phone,
-        personId: checkin.personId,
-        otherPersonId: otherId,
-        email: checkin.email,
-        otherEmail: other.exists() ? String((other.data() as { email?: string }).email ?? '') : undefined,
-      };
-    }
+  if (phoneAction === 'skip-collision' && existingOwnerId) {
+    const other = await getDoc(doc(db, 'oh_people', existingOwnerId));
+    flag = {
+      phone: checkin.phone,
+      personId: checkin.personId,
+      otherPersonId: existingOwnerId,
+      email: checkin.email,
+      otherEmail: other.exists() ? String((other.data() as { email?: string }).email ?? '') : undefined,
+    };
   }
 
   const marketingOptIn = parseMarketingOptIn(checkin.consentVersion);
@@ -92,9 +104,7 @@ async function planPersonWrite(
     batch.set(personRef, { ...payload, firstSeenAt: serverTimestamp() });
   }
 
-  if (!phoneSnap.exists()) {
-    batch.set(phoneRef, { personId: checkin.personId });
-  } else if (!flag) {
+  if (phoneAction === 'create' || phoneAction === 'keep') {
     batch.set(phoneRef, { personId: checkin.personId });
   }
 

@@ -58,6 +58,11 @@ describe('OH guest check-ins', () => {
     await assertSucceeds(setDoc(doc(db, 'oh_events', 'E', 'checkins', 'P'), validCheckin('anon1')));
   });
 
+  it('unauthenticated create is denied', async () => {
+    const db = env.unauthenticatedContext().firestore();
+    await assertFails(setDoc(doc(db, 'oh_events', 'E', 'checkins', 'P'), validCheckin('anon1')));
+  });
+
   it('denied when the event is closed', async () => {
     await seedOpenEvent(env, 'E', { status: 'closed' });
     const db = env.authenticatedContext('anon1').firestore();
@@ -166,17 +171,35 @@ describe('OH admin allowlist', () => {
     await assertSucceeds(getDocs(collection(db, 'oh_events', 'E', 'checkins')));
     await assertFails(setDoc(doc(db, 'oh_people', 'P'), { name: 'nope' }));
     await assertFails(updateDoc(doc(db, 'oh_events', 'E'), { status: 'closed' }));
+    await assertFails(setDoc(doc(db, 'oh_events', 'E', 'winners', 'P'), { personId: 'P', drawNo: 1, status: 'pending' }));
+    await assertFails(setDoc(doc(db, 'oh_events', 'E', 'draws', '1'), { personId: 'P', status: 'pending' }));
+    await assertFails(setDoc(doc(db, 'oh_config', 'public'), { currentEventId: 'E' }));
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'artifacts', 'app', 'public', 'data', 'submissions', 's1'), { name: 'secret' });
+    });
+    await assertSucceeds(getDoc(doc(db, 'artifacts', 'app', 'public', 'data', 'submissions', 's1')));
+    await assertFails(updateDoc(doc(db, 'artifacts', 'app', 'public', 'data', 'submissions', 's1'), { name: 'nope' }));
   });
 
-  it('admin creating winners/P twice is denied and draws cannot be deleted', async () => {
+  it('admin creating winners/P twice is denied', async () => {
     const db = env.authenticatedContext('nilo', adminAuth()).firestore();
-    await assertSucceeds(setDoc(doc(db, 'oh_events', 'E', 'winners', 'P'), { personId: 'P', drawNo: 1, status: 'pending' }));
-    await assertSucceeds(setDoc(doc(db, 'oh_events', 'E', 'draws', '1'), { personId: 'P', status: 'pending' }));
-    // create is only allowed when the lock doc does not exist; delete is forbidden, so a
-    // second create of the same winners/P can never happen. Delete of draws is also denied.
+    await assertSucceeds(
+      setDoc(doc(db, 'oh_events', 'E', 'winners', 'P'), { personId: 'P', drawNo: 1, status: 'pending' }),
+    );
+    // A second CREATE of the same lock is impossible: the document already exists, so the
+    // client SDK would treat another setDoc as an update. Delete is forbidden, so the lock
+    // cannot be removed and created again. The create rule also requires !exists(winners/P).
     await assertFails(deleteDoc(doc(db, 'oh_events', 'E', 'winners', 'P')));
-    await assertFails(deleteDoc(doc(db, 'oh_events', 'E', 'draws', '1')));
     const snap = await getDoc(doc(db, 'oh_events', 'E', 'winners', 'P'));
+    expect(snap.exists()).toBe(true);
+    expect(snap.data()?.drawNo).toBe(1);
+  });
+
+  it('draws cannot be deleted', async () => {
+    const db = env.authenticatedContext('nilo', adminAuth()).firestore();
+    await assertSucceeds(setDoc(doc(db, 'oh_events', 'E', 'draws', '1'), { personId: 'P', status: 'pending' }));
+    await assertFails(deleteDoc(doc(db, 'oh_events', 'E', 'draws', '1')));
+    const snap = await getDoc(doc(db, 'oh_events', 'E', 'draws', '1'));
     expect(snap.exists()).toBe(true);
   });
 
@@ -186,5 +209,22 @@ describe('OH admin allowlist', () => {
     await assertSucceeds(setDoc(doc(admin, 'oh_phoneIndex', '+639171234567'), { personId: 'P' }));
     const guest = env.authenticatedContext('anon1').firestore();
     await assertFails(setDoc(doc(guest, 'oh_people', 'P2'), { name: 'x' }));
+  });
+
+  it('artifacts are readable by viewers and writable only by admins', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'artifacts', 'app', 'public', 'data', 'submissions', 's1'), {
+        name: 'legacy',
+      });
+    });
+    const admin = env.authenticatedContext('nilo', adminAuth()).firestore();
+    await assertSucceeds(getDoc(doc(admin, 'artifacts', 'app', 'public', 'data', 'submissions', 's1')));
+    await assertSucceeds(
+      setDoc(doc(admin, 'artifacts', 'app', 'public', 'data', 'submissions', 's1'), { name: 'exported' }),
+    );
+    const stranger = env
+      .authenticatedContext('stranger', { email: 'stranger@example.com', email_verified: true })
+      .firestore();
+    await assertFails(getDoc(doc(stranger, 'artifacts', 'app', 'public', 'data', 'submissions', 's1')));
   });
 });

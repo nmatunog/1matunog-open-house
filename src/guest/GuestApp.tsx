@@ -20,6 +20,7 @@ import {
   saveGuestProfile,
   savePassportSession,
 } from '../lib/storage';
+import { projectorName } from '../lib/displayName';
 import { formatManilaDate } from '../lib/time';
 import type { GuestDetails, OhEvent, PassportSession } from '../types';
 import { PrivacyNotice } from './PrivacyNotice';
@@ -50,6 +51,7 @@ export function GuestApp() {
   const [codeValue, setCodeValue] = useState('');
   const [codeError, setCodeError] = useState('');
   const [returning, setReturning] = useState(false);
+  const [alreadyCheckedIn, setAlreadyCheckedIn] = useState(false);
 
   useEffect(() => {
     if (!configOk) return;
@@ -88,8 +90,10 @@ export function GuestApp() {
           setStamped(saved.stampedBoothIds);
           setSubmitted(saved.submitted);
           setPersonId(saved.personId);
-          if (saved.submitted) setStep('done');
-          else if (saved.details.privacyAgreed) setStep('passport');
+          if (saved.submitted) {
+            setAlreadyCheckedIn(true);
+            setStep('done');
+          } else if (saved.details.privacyAgreed) setStep('passport');
         } else if (profile) {
           setDetails(profile);
           setReturning(true);
@@ -184,11 +188,13 @@ export function GuestApp() {
       });
       setPersonId(pid);
       setSubmitted(true);
+      setAlreadyCheckedIn(false);
       setStep('done');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.toLowerCase().includes('permission') || message.toLowerCase().includes('already')) {
         setSubmitted(true);
+        setAlreadyCheckedIn(true);
         setStep('done');
       } else {
         setErrors({ submit: 'Could not check you in. Please find a host.' });
@@ -232,15 +238,15 @@ export function GuestApp() {
         <div className="p-6 space-y-4 text-center">
           <div className="rounded-3xl bg-green-600 text-white p-6">
             <p className="text-sm uppercase tracking-widest opacity-80">You&apos;re checked in!</p>
-            <SafeText as="h2" className="mt-2 text-3xl font-black" value={details.name || 'Guest'} />
+            <SafeText as="h2" className="mt-2 text-3xl font-black" value={projectorName(details.name || 'Guest')} />
             <p className="mt-2 text-sm">
               {formatManilaDate(event.eventDate)} · {doneCount}/{needed} booths
             </p>
           </div>
           <p className="text-gray-700 font-medium">Show this screen at the rewards counter.</p>
-          {submitted && (
+          {alreadyCheckedIn ? (
             <p className="text-green-700 font-semibold">You&apos;re already checked in. ✓</p>
-          )}
+          ) : null}
           <button
             type="button"
             className="w-full rounded-2xl bg-gray-900 py-3 font-bold text-white"
@@ -441,7 +447,7 @@ export function GuestApp() {
         <button
           type="button"
           className="w-full rounded-2xl bg-brand py-4 text-sm font-bold uppercase tracking-widest text-white"
-          onClick={() => setStep('details')}
+          onClick={() => setStep(submitted ? 'done' : 'details')}
           disabled={!event}
         >
           Start my passport
