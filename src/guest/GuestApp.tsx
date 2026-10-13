@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { signInAnonymously } from 'firebase/auth';
 import { doc, getDoc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { MoreDetails } from '../components/MoreDetails';
 import { FieldError, fieldClass } from '../components/FieldError';
@@ -27,10 +26,17 @@ import {
 } from '../lib/storage';
 import { projectorName } from '../lib/displayName';
 import { formatManilaDate } from '../lib/time';
-import { stampDocId } from '../lib/stations';
 import type { GuestDetails, OhEvent, PassportSession } from '../types';
 import { PrivacyNotice } from './PrivacyNotice';
 import { applyStationStamp, needsCheckInBeforeStamp, stampConfirmCopy } from './applyStamp';
+import {
+  STAMPS_LOADING_MESSAGE,
+  firestoreStampReader,
+  loadStampBoothIdsFromDocs,
+  mergeStationIds,
+  stampProgressFromDocs,
+  waitForGuestUid,
+} from './guestStamps';
 
 type Step = 'welcome' | 'details' | 'passport' | 'done' | 'unavailable';
 
@@ -61,6 +67,7 @@ export function GuestApp() {
   const [eventError, setEventError] = useState('');
   const [details, setDetails] = useState<GuestDetails>(emptyDetails);
   const [stamped, setStamped] = useState<string[]>([]);
+  const [stampsReady, setStampsReady] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [personId, setPersonId] = useState<string | undefined>();
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -79,7 +86,7 @@ export function GuestApp() {
   useEffect(() => {
     if (!configOk) return;
     const { db, auth } = getFirebase();
-    void signInAnonymously(auth).catch(() => {
+    void waitForGuestUid(auth).catch(() => {
       setEventError('Could not start a guest session. Please refresh.');
     });
 
@@ -108,13 +115,12 @@ export function GuestApp() {
       const device = loadDeviceCheckin(loaded.id);
       if (saved) {
         setDetails(saved.details);
-        setStamped(saved.stampedBoothIds);
         setSubmitted(saved.submitted);
         setPersonId(saved.personId);
         if (saved.submitted || device?.personId) {
           setAlreadyCheckedIn(Boolean(device?.personId && saved.submitted));
           setPersonId(saved.personId || device?.personId);
-          setStep(saved.stampedBoothIds.length >= loaded.booths.length ? 'done' : 'passport');
+          setStep('passport');
         } else if (saved.details.privacyAgreed) setStep('passport');
       } else if (device?.personId) {
         setPersonId(device.personId);
@@ -171,54 +177,65 @@ export function GuestApp() {
 
   useEffect(() => {
     if (!event) return;
+    const prior = loadPassportSession(event.id);
     const session: PassportSession = {
       eventId: event.id,
       details,
-      stampedBoothIds: stamped,
+      stampedBoothIds: stampsReady ? stamped : (prior?.stampedBoothIds ?? []),
       submitted,
       personId,
     };
     savePassportSession(session);
-    stampedRef.current = stamped;
-  }, [event, details, stamped, submitted, personId]);
+    if (stampsReady) stampedRef.current = stamped;
+  }, [event, details, stamped, submitted, personId, stampsReady]);
 
   useEffect(() => {
     if (!event || !personId) return;
     const { auth, db } = getFirebase();
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
     let cancelled = false;
+    setStampsReady(false);
     void (async () => {
-      const found: string[] = [];
-      for (const booth of event.booths) {
-        const snap = await getDoc(doc(db, 'oh_events', event.id, 'stamps', stampDocId(uid, booth.id)));
+      try {
+        const uid = await waitForGuestUid(auth);
         if (cancelled) return;
-        if (snap.exists()) found.push(booth.id);
-      }
-      if (found.length) {
-        setStamped((prev) => [...new Set([...prev, ...found])]);
+        const found = await loadStampBoothIdsFromDocs({
+          booths: event.booths,
+          anonUid: uid,
+          personId,
+          readStamp: firestoreStampReader(db, event.id),
+        });
+        if (cancelled) return;
+        const loadedIds = mergeStationIds(found);
+        stampedRef.current = loadedIds;
+        setStamped(loadedIds);
+
+        const pending = loadPendingStationScan();
+        const token = pending?.eventId === event.id ? pending.token : scanToken;
+        if (token) {
+          const applyKey = `${event.id}:${token}:${personId}`;
+          if (applyKeyRef.current !== applyKey) {
+            applyKeyRef.current = applyKey;
+            await runStampRef.current(token);
+          }
+        }
+        if (cancelled) return;
+        setStampsReady(true);
+      } catch {
+        if (cancelled) return;
+        setCodeError('Could not load your stamps. Please refresh.');
+        setStampsReady(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [event, personId]);
-
-  useEffect(() => {
-    if (!event || !scanToken) return;
-    const pending = loadPendingStationScan();
-    const token = pending?.eventId === event.id ? pending.token : scanToken;
-    if (!token) return;
-    if (!personId) return;
-    const applyKey = `${event.id}:${token}:${personId}`;
-    if (applyKeyRef.current === applyKey) return;
-    applyKeyRef.current = applyKey;
-    void runStampRef.current(token);
-  }, [event, scanToken, personId]);
+  }, [event, personId, scanToken]);
 
   const open = event ? eventCheckInOpen(event) : false;
   const needed = event?.booths.length ?? 0;
-  const doneCount = stamped.length;
+  const progress = stampProgressFromDocs({ loaded: stampsReady, stampBoothIds: stamped });
+  const doneCount = progress.loading ? 0 : progress.doneCount;
+  const stampedIds = progress.loading ? [] : progress.boothIds;
 
   function stationNo(boothId: string): number {
     if (!event) return 0;
@@ -255,8 +272,7 @@ export function GuestApp() {
 
   async function writeCheckin(cleaned: GuestDetails): Promise<string> {
     const { db, auth } = getFirebase();
-    if (!auth.currentUser?.uid) await signInAnonymously(auth);
-    const anonUid = getFirebase().auth.currentUser?.uid;
+    const anonUid = await waitForGuestUid(auth);
     if (!anonUid || !event) throw new Error('Not signed in');
     const pid = await personIdFromEmail(cleaned.email);
     try {
@@ -316,15 +332,13 @@ export function GuestApp() {
   async function runStamp(token: string) {
     if (!event) return;
     const { auth, db } = getFirebase();
-    if (!auth.currentUser?.uid) {
-      try {
-        await signInAnonymously(auth);
-      } catch {
-        setCodeError('Could not start a guest session. Please refresh.');
-        return;
-      }
+    let anonUid: string;
+    try {
+      anonUid = await waitForGuestUid(auth);
+    } catch {
+      setCodeError('Could not start a guest session. Please refresh.');
+      return;
     }
-    const anonUid = getFirebase().auth.currentUser?.uid;
     const pid = personId ?? loadDeviceCheckin(event.id)?.personId;
     if (!anonUid || !pid) {
       savePendingStationScan({ eventId: event.id, token });
@@ -347,8 +361,13 @@ export function GuestApp() {
         setScanNote(result.message);
         return;
       }
-      const prev = stampedRef.current;
-      const next = prev.includes(result.boothId) ? prev : [...prev, result.boothId];
+      const afterWrite = stampProgressFromDocs({
+        loaded: true,
+        stampBoothIds: stampedRef.current,
+        justAppliedBoothId: result.boothId,
+      });
+      const next = afterWrite.loading ? mergeStationIds(stampedRef.current, [result.boothId]) : afterWrite.boothIds;
+      stampedRef.current = next;
       setStamped(next);
       clearPendingStationScan();
       setShowTyped(false);
@@ -391,6 +410,17 @@ export function GuestApp() {
           <p className="text-gray-700">{eventError}</p>
           <p className="text-sm text-gray-500">Check-in is not open yet. Please see a host.</p>
           <AdminLink />
+        </div>
+      </Shell>
+    );
+  }
+
+  if (event && personId && !stampsReady && (step === 'passport' || step === 'done')) {
+    return (
+      <Shell>
+        <Header subtitle={headerDate} />
+        <div className="p-6 text-center">
+          <p className="text-lg font-semibold">{STAMPS_LOADING_MESSAGE}</p>
         </div>
       </Shell>
     );
@@ -532,7 +562,7 @@ export function GuestApp() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             {event.booths.map((b, i) => {
-              const done = stamped.includes(b.id);
+              const done = stampedIds.includes(b.id);
               return (
                 <div
                   key={b.id}
@@ -644,6 +674,7 @@ export function GuestApp() {
                 }
                 setDetails(emptyDetails);
                 setStamped([]);
+                setStampsReady(false);
                 setPersonId(undefined);
                 setSubmitted(false);
                 setReturning(false);
