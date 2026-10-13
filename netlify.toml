@@ -5,8 +5,13 @@
 [build.environment]
   NODE_VERSION = "22"
 
-# SPA fallback. Guest `/` and admin `/admin/*` (including the projector draw)
-# share index.html; Netlify still serves real files when they exist.
+# SPA fallback. Guest `/`, station scan `/s/:eventId/:token`, and admin `/admin/*`
+# (including the projector draw and print cards) share index.html.
+[[redirects]]
+  from = "/s/*"
+  to = "/index.html"
+  status = 200
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

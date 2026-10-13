@@ -25,13 +25,22 @@ import { ProjectorName } from '../components/ProjectorName';
 import { SafeText } from '../components/SafeText';
 import { getFirebase } from '../firebase/app';
 import { firebaseConfigReady, readFirebaseWebConfig } from '../firebase/config';
-import { boothsFromLastEvent, boothsToStored, type BoothDraft } from '../lib/booths';
+import { boothsFromLastEvent, type BoothDraft } from '../lib/booths';
 import { checkinsCsv, downloadCsv, peopleCsv, winnersCsv } from '../lib/csv';
 import { eligiblePool, eventCheckInOpen, raffleWindowOpen, statusLabel } from '../lib/eligibility';
 import { parsePerson, syncEventCheckins } from '../lib/peopleSync';
 import { drawAndLock, loadLivePool, parseCheckin, parseDraw, resolvePendingDraw, spinNames } from '../lib/raffle';
+import {
+  buildStationMaterials,
+  countStampsByBooth,
+  countStampsByPerson,
+  parseStamp,
+  rotateStationMaterials,
+  writeStationMaterials,
+} from '../lib/stations';
 import { formatManilaDate, formatManilaTime, manilaDateTimeToDate, todayYmdManila, toDate } from '../lib/time';
-import type { AdminProfile, Checkin, Draw, DuplicateFlag, OhEvent, OhRole, Person } from '../types';
+import type { AdminProfile, Checkin, Draw, DuplicateFlag, OhEvent, OhRole, Person, StationStamp } from '../types';
+import { PrintStationCards } from './PrintStationCards';
 
 type Screen = 'today' | 'list' | 'guest' | 'history' | 'new' | 'more';
 
@@ -148,6 +157,7 @@ export function AdminApp() {
   return (
     <Routes>
       <Route path="draw" element={<DrawRoute profile={profile} />} />
+      <Route path="print/:eventId" element={<PrintStationCards />} />
       <Route path="*" element={<AdminHome profile={profile} />} />
     </Routes>
   );
@@ -165,6 +175,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
   const [currentId, setCurrentId] = useState<string>('');
   const [eventId, setEventId] = useState<string>('');
   const [checkins, setCheckins] = useState<Checkin[]>([]);
+  const [stamps, setStamps] = useState<StationStamp[]>([]);
   const [draws, setDraws] = useState<Draw[]>([]);
   const [flags, setFlags] = useState<DuplicateFlag[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -203,6 +214,9 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
     const unsubC = onSnapshot(collection(db, 'oh_events', selectedEventId, 'checkins'), (snap) => {
       setCheckins(snap.docs.map((d) => parseCheckin(d.id, d.data() as Record<string, unknown>)));
     });
+    const unsubS = onSnapshot(collection(db, 'oh_events', selectedEventId, 'stamps'), (snap) => {
+      setStamps(snap.docs.map((d) => parseStamp(d.id, d.data() as Record<string, unknown>)));
+    });
     const unsubD = onSnapshot(collection(db, 'oh_events', selectedEventId, 'draws'), (snap) => {
       const list = snap.docs.map((d) => parseDraw(d.id, d.data() as Record<string, unknown>));
       list.sort((a, b) => Number(a.id) - Number(b.id));
@@ -210,6 +224,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
     });
     return () => {
       unsubC();
+      unsubS();
       unsubD();
     };
   }, [selectedEventId]);
@@ -241,7 +256,13 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
     return map;
   }, [draws]);
 
-  const canWin = event ? eligiblePool(checkins, event, winners) : [];
+  const stampCounts = useMemo(() => countStampsByPerson(stamps), [stamps]);
+  const boothStampCounts = useMemo(() => countStampsByBooth(stamps), [stamps]);
+  const checkinsCounted = useMemo(
+    () => checkins.map((c) => ({ ...c, stampsCompleted: stampCounts.get(c.personId) ?? 0 })),
+    [checkins, stampCounts],
+  );
+  const canWin = event ? eligiblePool(checkins, event, winners, stampCounts) : [];
   const pending = event && event.pendingDrawNo != null ? draws.find((d) => d.id === String(event.pendingDrawNo)) : null;
 
   return (
@@ -284,11 +305,13 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             event={event}
             currentId={currentId}
             isAdmin={isAdmin}
-            checkins={checkins}
+            checkins={checkinsCounted}
+            boothStampCounts={boothStampCounts}
             canWinCount={canWin.length}
             pending={pending ?? null}
             onPick={setEventId}
             onOpenDraw={() => navigate(`/admin/draw?event=${event.id}`)}
+            onPrintCards={() => navigate(`/admin/print/${event.id}`)}
             onGuestList={() => setScreen('list')}
             flags={flags}
             syncNote={syncNote}
@@ -297,7 +320,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
         {screen === 'list' && event ? (
           <GuestListScreen
             event={event}
-            checkins={checkins}
+            checkins={checkinsCounted}
             isAdmin={isAdmin}
             onSelect={(c) => {
               setSelectedPerson(c);
@@ -309,6 +332,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
           <GuestDetailScreen
             event={event}
             checkin={selectedPerson}
+            stampCount={stampCounts.get(selectedPerson.personId) ?? 0}
             isAdmin={isAdmin}
             onBack={() => setScreen('list')}
           />
@@ -352,10 +376,12 @@ function TodayScreen({
   currentId,
   isAdmin,
   checkins,
+  boothStampCounts,
   canWinCount,
   pending,
   onPick,
   onOpenDraw,
+  onPrintCards,
   onGuestList,
   flags,
   syncNote,
@@ -365,20 +391,39 @@ function TodayScreen({
   currentId: string;
   isAdmin: boolean;
   checkins: Checkin[];
+  boothStampCounts: Map<string, number>;
   canWinCount: number;
   pending: Draw | null;
   onPick: (id: string) => void;
   onOpenDraw: () => void;
+  onPrintCards: () => void;
   onGuestList: () => void;
   flags: DuplicateFlag[];
   syncNote: string;
 }) {
   const open = eventCheckInOpen(event);
+  const [rotateNote, setRotateNote] = useState('');
   async function setCurrent() {
     await setDoc(doc(getFirebase().db, 'oh_config', 'public'), { currentEventId: event.id }, { merge: true });
   }
   async function setStatus(status: OhEvent['status']) {
     await updateDoc(doc(getFirebase().db, 'oh_events', event.id), { status });
+  }
+  async function rotateCodes() {
+    if (
+      !confirm(
+        'This makes new QR codes for every station. The old printed cards will stop working. Print the new cards after this.',
+      )
+    ) {
+      return;
+    }
+    setRotateNote('Making new codes…');
+    try {
+      await rotateStationMaterials(getFirebase().db, event);
+      setRotateNote('New codes are ready. Print the station QR cards again.');
+    } catch {
+      setRotateNote('Could not make new codes. Please try again.');
+    }
   }
   return (
     <div className="space-y-4">
@@ -397,6 +442,19 @@ function TodayScreen({
         <Stat label="Checked in" value={String(checkins.length)} />
         <Stat label="Can win now" value={String(canWinCount)} />
       </div>
+      <div className="rounded-2xl bg-white p-4 shadow">
+        <p className="text-xs uppercase tracking-widest text-gray-500">Stamps per station</p>
+        <ul className="mt-2 divide-y">
+          {event.booths.map((b, i) => (
+            <li key={b.id} className="flex items-center justify-between py-2 text-sm">
+              <span>
+                Station {i + 1} · <SafeText value={b.name} />
+              </span>
+              <span className="text-lg font-black">{boothStampCounts.get(b.id) ?? 0}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
       {pending ? (
         <p className="rounded-xl bg-amber-50 p-3 text-sm">
           There is a winner waiting: <strong>{pending.displayName}</strong>. Mark Claimed or Not here before drawing again.
@@ -409,6 +467,15 @@ function TodayScreen({
       >
         Start Draw
       </button>
+      {isAdmin ? (
+        <button
+          type="button"
+          onClick={onPrintCards}
+          className="w-full rounded-2xl bg-gray-900 py-4 text-lg font-bold text-white"
+        >
+          Print station QR cards
+        </button>
+      ) : null}
       <div className="flex flex-wrap gap-2 text-sm">
         <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={onGuestList}>
           Guest list
@@ -429,9 +496,13 @@ function TodayScreen({
             <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={() => void setStatus('closed')}>
               Close check-in
             </button>
+            <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={() => void rotateCodes()}>
+              Make new QR codes
+            </button>
           </>
         ) : null}
       </div>
+      {rotateNote ? <p className="text-sm text-gray-700">{rotateNote}</p> : null}
       <MoreDetails>
         <p>Window: {formatManilaTime(toDate(event.checkInOpensAt) ?? new Date())}–{formatManilaTime(toDate(event.checkInClosesAt) ?? new Date())} (Manila).</p>
         <p>Raffle: {raffleWindowOpen(event) ? 'open' : 'outside window'}. Repeat winners: {event.raffle.allowRepeatWinners ? 'ON' : 'OFF'}.</p>
@@ -506,11 +577,13 @@ function GuestListScreen({
 function GuestDetailScreen({
   event,
   checkin,
+  stampCount,
   isAdmin,
   onBack,
 }: {
   event: OhEvent;
   checkin: Checkin;
+  stampCount: number;
   isAdmin: boolean;
   onBack: () => void;
 }) {
@@ -535,7 +608,9 @@ function GuestDetailScreen({
       <SafeText as="h2" className="text-xl font-bold" value={checkin.name} />
       <p className="text-sm text-gray-600">{checkin.email}</p>
       <p className="text-sm text-gray-600">{checkin.phone}</p>
-      <p className="text-sm">Stamps: {checkin.stampsCompleted}</p>
+      <p className="text-sm">
+        Stamps: {stampCount} of {event.booths.length}
+      </p>
       {isAdmin ? (
         <>
           <label className="block text-sm">
@@ -609,13 +684,14 @@ function NewEventScreen({
     }
     setBusy(true);
     try {
-      const stored = await boothsToStored(booths.filter((b) => b.name.trim()));
       const id = `evt-${date}-${crypto.randomUUID().slice(0, 8)}`;
+      const materials = await buildStationMaterials(id, booths.filter((b) => b.name.trim()));
       const opens = Timestamp.fromDate(manilaDateTimeToDate(date, openT));
       const closes = Timestamp.fromDate(manilaDateTimeToDate(date, closeT));
       const rOpens = Timestamp.fromDate(manilaDateTimeToDate(date, raffleOpen));
       const rCloses = Timestamp.fromDate(manilaDateTimeToDate(date, raffleClose));
-      await setDoc(doc(getFirebase().db, 'oh_events', id), {
+      const { db } = getFirebase();
+      await setDoc(doc(db, 'oh_events', id), {
         name: name.trim(),
         venue: venue.trim(),
         eventDate: date,
@@ -624,17 +700,18 @@ function NewEventScreen({
         raffle: {
           opensAt: rOpens,
           closesAt: rCloses,
-          minStamps: stored.length,
+          minStamps: materials.booths.length,
           allowRepeatWinners: repeat,
           prizes: [],
         },
-        booths: stored,
+        booths: materials.booths,
         status: 'draft',
         createdBy: profile.email,
         pendingDrawNo: null,
         lastDrawNo: 0,
         createdAt: serverTimestamp(),
       });
+      await writeStationMaterials(db, id, materials);
       onSaved(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save');
@@ -683,24 +760,32 @@ function NewEventScreen({
           <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
           Allow the same person to win more than once at this event (usually leave this OFF)
         </label>
-        <p className="font-semibold">Booths (new codes each event — write them down for presenters)</p>
+        <p className="font-semibold">Stations (new QR codes each event — print the cards from Today)</p>
         {booths.map((b, i) => (
           <div key={b.id} className="grid grid-cols-2 gap-2">
-            <input
-              className={fieldClass()}
-              value={b.name}
-              onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-            />
-            <input
-              className={fieldClass()}
-              value={b.code}
-              onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))}
-            />
+            <label className="text-sm">
+              Station {i + 1} name
+              <input
+                className={`${fieldClass()} mt-1`}
+                value={b.name}
+                onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+              />
+            </label>
+            <label className="text-sm">
+              Backup code if a camera will not scan
+              <input
+                className={`${fieldClass()} mt-1`}
+                value={b.code}
+                onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))}
+                autoCapitalize="characters"
+                autoComplete="off"
+              />
+            </label>
           </div>
         ))}
       </MoreDetails>
       <p className="text-sm text-gray-600">
-        Saving does not switch the public guest event. On Today, use “Make this the public event” when you are ready.
+        Saving does not switch the public guest event. On Today, use “Make this the public event”, then “Print station QR cards”.
       </p>
       <FieldError message={error} />
       <button type="button" disabled={busy} className="w-full rounded-2xl bg-brand py-3 font-bold text-white" onClick={() => void save()}>

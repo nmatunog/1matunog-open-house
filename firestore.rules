@@ -50,6 +50,49 @@ service cloud.firestore {
         allow update: if ohIsAdmin(); // e.g. mark no_show releases lock: status field
         allow delete: if false;
       }
+
+      // Plain tokens live here. Guests must never list or read this collection.
+      match /stationSecrets/{boothId} {
+        allow read, write: if ohIsAdmin();
+      }
+
+      // Doc id = sha256(eventId + token or short code). Get-by-id is enough to
+      // prove the guest scanned or typed a real station secret. Listing would
+      // leak every hash, so only admins may list.
+      match /stampKeys/{keyId} {
+        allow get: if true;
+        allow list: if ohIsAdmin();
+        allow create, update, delete: if ohIsAdmin();
+      }
+
+      // One stamp doc per device (anon uid) per station. Count these docs for
+      // raffle eligibility — never trust checkins.stampsCompleted.
+      match /stamps/{stampId} {
+        allow get: if ohIsViewer()
+          || (ohSignedIn() && stampId.matches('^' + request.auth.uid + '_.*'));
+        allow list: if ohIsViewer();
+        allow create: if ohSignedIn()
+          && ohEvent(eid).status == 'open'
+          && request.time >= ohEvent(eid).checkInOpensAt && request.time <= ohEvent(eid).checkInClosesAt
+          && request.resource.data.keys().hasOnly(['boothId','anonUid','personId','stampedAt','stampKeyId'])
+          && request.resource.data.anonUid == request.auth.uid
+          && stampId == request.auth.uid + '_' + request.resource.data.boothId
+          && request.resource.data.stampedAt == request.time
+          && request.resource.data.boothId is string
+          && request.resource.data.boothId.size() > 0
+          && request.resource.data.boothId.size() <= 40
+          && request.resource.data.personId is string
+          && request.resource.data.personId.size() > 0
+          && request.resource.data.personId.size() <= 80
+          && request.resource.data.stampKeyId is string
+          && request.resource.data.stampKeyId.size() == 64
+          && exists(/databases/$(database)/documents/oh_events/$(eid)/checkins/$(request.resource.data.personId))
+          && get(/databases/$(database)/documents/oh_events/$(eid)/checkins/$(request.resource.data.personId)).data.anonUid == request.auth.uid
+          && exists(/databases/$(database)/documents/oh_events/$(eid)/stampKeys/$(request.resource.data.stampKeyId))
+          && get(/databases/$(database)/documents/oh_events/$(eid)/stampKeys/$(request.resource.data.stampKeyId)).data.boothId == request.resource.data.boothId
+          && get(/databases/$(database)/documents/oh_events/$(eid)/stampKeys/$(request.resource.data.stampKeyId)).data.eventId == eid;
+        allow update, delete: if ohIsAdmin();
+      }
     }
     // Legacy app: lock down. Admins can still read/export the old data for migration.
     match /artifacts/{appId}/public/data/{document=**} {

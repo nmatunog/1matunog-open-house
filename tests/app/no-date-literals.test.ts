@@ -22,4 +22,15 @@ describe('no hard-coded event date literals in app code', () => {
     }
     expect(hits).toEqual([]);
   });
+
+  it('printed station QR cards encode the live Netlify guest URL', () => {
+    const print = readFileSync(join(process.cwd(), 'src/admin/PrintStationCards.tsx'), 'utf8');
+    const stations = readFileSync(join(process.cwd(), 'src/lib/stations.ts'), 'utf8');
+    const netlify = readFileSync(join(process.cwd(), 'netlify.toml'), 'utf8');
+    expect(print).toContain('printedStationQrUrl');
+    expect(print).not.toContain('window.location.origin');
+    expect(print).not.toMatch(/localhost|firebaseapp\.com|\.web\.app/);
+    expect(stations).toContain("PRODUCTION_SITE_ORIGIN = 'https://aia-openhouse.netlify.app'");
+    expect(netlify).toMatch(/from\s*=\s*"\/s\/\*/);
+  });
 });
