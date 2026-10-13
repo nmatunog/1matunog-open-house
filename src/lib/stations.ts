@@ -243,6 +243,25 @@ export function countStampsByPerson(stamps: { personId: string }[]): Map<string,
   return map;
 }
 
+/** Unique stations per person. Duplicate docs for the same booth do not count twice. */
+export function countUniqueStationsByPerson(
+  stamps: { personId: string; boothId?: string }[],
+): Map<string, number> {
+  const seen = new Map<string, Set<string>>();
+  for (const stamp of stamps) {
+    if (!stamp.personId || !stamp.boothId) continue;
+    let set = seen.get(stamp.personId);
+    if (!set) {
+      set = new Set();
+      seen.set(stamp.personId, set);
+    }
+    set.add(stamp.boothId);
+  }
+  const map = new Map<string, number>();
+  for (const [personId, set] of seen) map.set(personId, set.size);
+  return map;
+}
+
 export function countStampsByBooth(stamps: { boothId: string }[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const stamp of stamps) {

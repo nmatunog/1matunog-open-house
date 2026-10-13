@@ -96,6 +96,44 @@ textarea {
   letter-spacing: 0.04em;
 }
 
+.projector-reel {
+  height: 6.5rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.projector-reel-strip {
+  will-change: transform;
+}
+
+.projector-reel-item {
+  height: 6.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(2.25rem, 8vw, 4.5rem);
+  line-height: 1;
+  margin: 0;
+}
+
+.projector-reel-winner-on {
+  color: #fff;
+  text-shadow: 0 0 24px rgba(211, 17, 69, 0.85);
+}
+
+.projector-reel-fade .projector-reel-item {
+  animation: projector-fade-in 280ms ease-out;
+}
+
+@keyframes projector-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @page {
   size: A5 portrait;
   margin: 10mm;

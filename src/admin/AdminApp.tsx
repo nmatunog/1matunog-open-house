@@ -27,23 +27,28 @@ import { getFirebase } from '../firebase/app';
 import { firebaseConfigReady, readFirebaseWebConfig } from '../firebase/config';
 import { boothsFromLastEvent, type BoothDraft } from '../lib/booths';
 import { checkinsCsv, downloadCsv, peopleCsv, winnersCsv } from '../lib/csv';
-import { eligiblePool, eventCheckInOpen, raffleWindowOpen, statusLabel } from '../lib/eligibility';
+import { projectorName } from '../lib/displayName';
+import { eligiblePool, eventCheckInOpen, guestListStatus, raffleWindowOpen, statusLabel } from '../lib/eligibility';
+import { openCheckInNowPatch } from '../lib/openCheckIn';
 import { parsePerson, syncEventCheckins } from '../lib/peopleSync';
-import { drawAndLock, loadLivePool, parseCheckin, parseDraw, resolvePendingDraw, spinNames } from '../lib/raffle';
+import { drawAndLock, loadLivePool, parseCheckin, parseDraw, resolvePendingDraw } from '../lib/raffle';
+import { DRAW_HINT } from '../lib/reel';
 import {
   buildStationMaterials,
   countStampsByBooth,
-  countStampsByPerson,
+  countUniqueStationsByPerson,
   parseStamp,
   rotateStationMaterials,
   writeStationMaterials,
 } from '../lib/stations';
+import { detailsFromEvent, eventDetailsUpdate } from '../lib/eventDetails';
 import { formatManilaDate, formatManilaTime, manilaDateTimeToDate, todayYmdManila, toDate } from '../lib/time';
 import type { AdminProfile, Checkin, Draw, DuplicateFlag, OhEvent, Person, StationStamp } from '../types';
 import { ADMIN_COPY, ADMIN_LOG } from './adminCopy';
 import { AdminLoadError, AdminLoading, GuestListEmpty, HistoryEmpty, NoEventToday } from './AdminEmptyStates';
 import { eventsFromSnapshot, readAdminRole } from './eventsFromSnapshot';
 import { PrintStationCards } from './PrintStationCards';
+import { ProjectorReel } from './ProjectorReel';
 
 type Screen = 'today' | 'list' | 'guest' | 'history' | 'new' | 'more';
 
@@ -192,6 +197,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
   const [eventsReady, setEventsReady] = useState(false);
   const [configReady, setConfigReady] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [editingEvent, setEditingEvent] = useState<OhEvent | null>(null);
 
   useEffect(() => {
     const { db } = getFirebase();
@@ -309,7 +315,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
     return map;
   }, [draws]);
 
-  const stampCounts = useMemo(() => countStampsByPerson(stamps), [stamps]);
+  const stampCounts = useMemo(() => countUniqueStationsByPerson(stamps), [stamps]);
   const boothStampCounts = useMemo(() => countStampsByBooth(stamps), [stamps]);
   const checkinsCounted = useMemo(
     () => checkins.map((c) => ({ ...c, stampsCompleted: stampCounts.get(c.personId) ?? 0 })),
@@ -346,7 +352,13 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             History
           </NavBtn>
           {isAdmin ? (
-            <NavBtn onClick={() => setScreen('new')} active={screen === 'new'}>
+            <NavBtn
+              onClick={() => {
+                setEditingEvent(null);
+                setScreen('new');
+              }}
+              active={screen === 'new' && !editingEvent}
+            >
               New event
             </NavBtn>
           ) : null}
@@ -372,6 +384,10 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             onOpenDraw={() => navigate(`/admin/draw?event=${event.id}`)}
             onPrintCards={() => navigate(`/admin/print/${event.id}`)}
             onGuestList={() => setScreen('list')}
+            onEdit={() => {
+              setEditingEvent(event);
+              setScreen('new');
+            }}
             flags={flags}
             syncNote={syncNote}
           />
@@ -401,10 +417,13 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
         {!loadError && ready && screen === 'history' && event ? <HistoryScreen event={event} draws={draws} /> : null}
         {!loadError && ready && screen === 'new' && isAdmin ? (
           <NewEventScreen
+            key={editingEvent?.id ?? 'new'}
             last={events[0] ?? null}
+            existing={editingEvent}
             profile={profile}
             onSaved={(id) => {
               setEventId(id);
+              setEditingEvent(null);
               setScreen('today');
             }}
           />
@@ -444,6 +463,7 @@ function TodayScreen({
   onOpenDraw,
   onPrintCards,
   onGuestList,
+  onEdit,
   flags,
   syncNote,
 }: {
@@ -459,6 +479,7 @@ function TodayScreen({
   onOpenDraw: () => void;
   onPrintCards: () => void;
   onGuestList: () => void;
+  onEdit: () => void;
   flags: DuplicateFlag[];
   syncNote: string;
 }) {
@@ -469,6 +490,12 @@ function TodayScreen({
   }
   async function setStatus(status: OhEvent['status']) {
     await updateDoc(doc(getFirebase().db, 'oh_events', event.id), { status });
+  }
+  async function openCheckInNow() {
+    if (!confirm(ADMIN_COPY.openCheckInNowConfirm)) return;
+    const now = new Date();
+    const patch = openCheckInNowPatch(now, toDate(event.checkInClosesAt));
+    await updateDoc(doc(getFirebase().db, 'oh_events', event.id), patch);
   }
   async function rotateCodes() {
     if (
@@ -541,6 +568,11 @@ function TodayScreen({
         <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={onGuestList}>
           Guest list
         </button>
+        {isAdmin ? (
+          <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={onEdit}>
+            {ADMIN_COPY.editEvent}
+          </button>
+        ) : null}
         <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={() => downloadCsv(`checkins-${event.id}.csv`, checkinsCsv(event.id, checkins))}>
           Download check-ins
         </button>
@@ -551,6 +583,11 @@ function TodayScreen({
         ) : null}
         {isAdmin ? (
           <>
+            {!open ? (
+              <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={() => void openCheckInNow()}>
+                {ADMIN_COPY.openCheckInNow}
+              </button>
+            ) : null}
             <button type="button" className="rounded-xl bg-white px-3 py-2 shadow" onClick={() => void setStatus('open')}>
               Open check-in
             </button>
@@ -622,17 +659,20 @@ function GuestListScreen({
         Download
       </button>
       <ul className="divide-y rounded-2xl bg-white shadow">
-        {checkins.map((c) => (
+        {checkins.map((c) => {
+          const status = guestListStatus(c.stampsCompleted, event.booths.length);
+          return (
           <li key={c.personId}>
             <button type="button" className="flex w-full items-center justify-between px-4 py-3 text-left" onClick={() => onSelect(c)}>
               <span>
                 <SafeText className="font-semibold" value={c.name} />
                 <SafeText className="block text-xs text-gray-500" value={c.invitedBy ? `Invited by ${c.invitedBy}` : '—'} />
               </span>
-              {isAdmin ? <span className="text-xs text-gray-400">Open</span> : null}
+              {isAdmin ? <span className="text-xs text-gray-400">{status}</span> : null}
             </button>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );
@@ -724,24 +764,28 @@ function HistoryScreen({ event, draws }: { event: OhEvent; draws: Draw[] }) {
 
 function NewEventScreen({
   last,
+  existing,
   profile,
   onSaved,
 }: {
   last: OhEvent | null;
+  existing: OhEvent | null;
   profile: AdminProfile;
   onSaved: (id: string) => void;
 }) {
-  const [name, setName] = useState('Open House');
-  const [venue, setVenue] = useState(last?.venue || 'Cebu');
-  const [date, setDate] = useState(todayYmdManila());
-  const [openT, setOpenT] = useState('08:00');
-  const [closeT, setCloseT] = useState('18:00');
-  const [raffleOpen, setRaffleOpen] = useState('08:00');
-  const [raffleClose, setRaffleClose] = useState('18:00');
-  const [repeat, setRepeat] = useState(false);
+  const prefill = existing ? detailsFromEvent(existing) : null;
+  const [name, setName] = useState(prefill?.name ?? 'Open House');
+  const [venue, setVenue] = useState(prefill?.venue || last?.venue || 'Cebu');
+  const [date, setDate] = useState(prefill?.eventDate ?? todayYmdManila());
+  const [openT, setOpenT] = useState(prefill?.openT ?? '08:00');
+  const [closeT, setCloseT] = useState(prefill?.closeT ?? '18:00');
+  const [raffleOpen, setRaffleOpen] = useState(prefill?.raffleOpen ?? '08:00');
+  const [raffleClose, setRaffleClose] = useState(prefill?.raffleClose ?? '18:00');
+  const [repeat, setRepeat] = useState(existing?.raffle.allowRepeatWinners === true);
   const [booths, setBooths] = useState<BoothDraft[]>(() => boothsFromLastEvent(last?.booths ?? []));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const editing = Boolean(existing);
 
   async function save() {
     setError('');
@@ -751,13 +795,26 @@ function NewEventScreen({
     }
     setBusy(true);
     try {
+      const { db } = getFirebase();
+      if (existing) {
+        await updateDoc(doc(db, 'oh_events', existing.id), eventDetailsUpdate({
+          name,
+          venue,
+          eventDate: date,
+          openT,
+          closeT,
+          raffleOpen,
+          raffleClose,
+        }));
+        onSaved(existing.id);
+        return;
+      }
       const id = `evt-${date}-${crypto.randomUUID().slice(0, 8)}`;
       const materials = await buildStationMaterials(id, booths.filter((b) => b.name.trim()));
       const opens = Timestamp.fromDate(manilaDateTimeToDate(date, openT));
       const closes = Timestamp.fromDate(manilaDateTimeToDate(date, closeT));
       const rOpens = Timestamp.fromDate(manilaDateTimeToDate(date, raffleOpen));
       const rCloses = Timestamp.fromDate(manilaDateTimeToDate(date, raffleClose));
-      const { db } = getFirebase();
       await setDoc(doc(db, 'oh_events', id), {
         name: name.trim(),
         venue: venue.trim(),
@@ -789,7 +846,7 @@ function NewEventScreen({
 
   return (
     <div className="space-y-3 rounded-2xl bg-white p-4 shadow">
-      <h2 className="font-bold">New event</h2>
+      <h2 className="font-bold">{editing ? ADMIN_COPY.editEvent : 'New event'}</h2>
       <label className="block text-sm">
         Name
         <input className={`${fieldClass()} mt-1`} value={name} onChange={(e) => setName(e.target.value)} />
@@ -827,36 +884,44 @@ function NewEventScreen({
           <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} />
           Allow the same person to win more than once at this event (usually leave this OFF)
         </label>
-        <p className="font-semibold">Stations (new QR codes each event — print the cards from Today)</p>
-        {booths.map((b, i) => (
-          <div key={b.id} className="grid grid-cols-2 gap-2">
-            <label className="text-sm">
-              Station {i + 1} name
-              <input
-                className={`${fieldClass()} mt-1`}
-                value={b.name}
-                onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-              />
-            </label>
-            <label className="text-sm">
-              Backup code if a camera will not scan
-              <input
-                className={`${fieldClass()} mt-1`}
-                value={b.code}
-                onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))}
-                autoCapitalize="characters"
-                autoComplete="off"
-              />
-            </label>
-          </div>
-        ))}
+        {editing ? (
+          <p>Station names, QR codes, and station ids stay as they were. Printed cards still work.</p>
+        ) : (
+          <>
+            <p className="font-semibold">Stations (new QR codes each event — print the cards from Today)</p>
+            {booths.map((b, i) => (
+              <div key={b.id} className="grid grid-cols-2 gap-2">
+                <label className="text-sm">
+                  Station {i + 1} name
+                  <input
+                    className={`${fieldClass()} mt-1`}
+                    value={b.name}
+                    onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                  />
+                </label>
+                <label className="text-sm">
+                  Backup code if a camera will not scan
+                  <input
+                    className={`${fieldClass()} mt-1`}
+                    value={b.code}
+                    onChange={(e) => setBooths((prev) => prev.map((x, j) => (j === i ? { ...x, code: e.target.value } : x)))}
+                    autoCapitalize="characters"
+                    autoComplete="off"
+                  />
+                </label>
+              </div>
+            ))}
+          </>
+        )}
       </MoreDetails>
       <p className="text-sm text-gray-600">
-        Saving does not switch the public guest event. On Today, use “Make this the public event”, then “Print station QR cards”.
+        {editing
+          ? 'This keeps the same event and the same printed station cards. It does not make new QR codes.'
+          : 'Saving does not switch the public guest event. On Today, use “Make this the public event”, then “Print station QR cards”.'}
       </p>
       <FieldError message={error} />
       <button type="button" disabled={busy} className="w-full rounded-2xl bg-brand py-3 font-bold text-white" onClick={() => void save()}>
-        {busy ? 'Saving…' : 'Save event'}
+        {busy ? 'Saving…' : editing ? ADMIN_COPY.save : 'Save event'}
       </button>
     </div>
   );
@@ -906,6 +971,7 @@ function DrawRoute({ profile }: { profile: AdminProfile }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [fullContact, setFullContact] = useState<Checkin | null>(null);
+  const [reel, setReel] = useState<{ names: string[]; winner: string } | null>(null);
 
   useEffect(() => {
     if (eventId) return;
@@ -948,7 +1014,7 @@ function DrawRoute({ profile }: { profile: AdminProfile }) {
     function onKey(e: KeyboardEvent) {
       if (e.code === 'Space') {
         e.preventDefault();
-        if (!pending && !busy) void doDraw();
+        if (!pending && !busy && !reel) void doDraw();
       }
     }
     window.addEventListener('keydown', onKey);
@@ -956,16 +1022,16 @@ function DrawRoute({ profile }: { profile: AdminProfile }) {
   });
 
   async function doDraw() {
-    if (!eventId || pending || profile.role !== 'admin') return;
+    if (!eventId || pending || reel || profile.role !== 'admin') return;
     setBusy(true);
     setError('');
     try {
       const live = await loadLivePool(getFirebase().db, eventId);
-      const frames = spinNames(live.pool, 14);
-      for (const n of frames) {
-        setSpin(n);
-        await new Promise((r) => setTimeout(r, 70));
+      if (live.pool.length === 0) {
+        setError('Nobody is eligible right now.');
+        return;
       }
+      const names = live.pool.map((c) => projectorName(c.name));
       const result = await drawAndLock(getFirebase().db, eventId, profile.email);
       if (!result.ok) {
         setError(result.reason === 'pending' ? 'Finish the current winner first.' : 'Nobody is eligible right now.');
@@ -973,6 +1039,7 @@ function DrawRoute({ profile }: { profile: AdminProfile }) {
         return;
       }
       setSpin(null);
+      setReel({ names, winner: result.displayName });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Draw failed');
       setSpin(null);
@@ -987,6 +1054,7 @@ function DrawRoute({ profile }: { profile: AdminProfile }) {
     try {
       await resolvePendingDraw(getFirebase().db, eventId, status);
       setPending(null);
+      setReel(null);
       if (status === 'no_show') {
         await doDraw();
       }
@@ -1002,13 +1070,26 @@ function DrawRoute({ profile }: { profile: AdminProfile }) {
         <h1 className="mt-2 text-2xl font-bold">{eventName}</h1>
         <p className="mt-2 text-slate-300">{poolCount} in the draw</p>
         <div className="my-10 w-full rounded-3xl border border-red-500/40 bg-slate-900 p-8">
-          {pending ? (
-            <ProjectorName displayName={pending.displayName} invitedBy={pending.invitedBy} large />
+          {reel ? (
+            <ProjectorReel
+              names={reel.names}
+              winner={reel.winner}
+              onDone={() => setReel(null)}
+            />
+          ) : pending ? (
+            <div className="projector-reel-winner-on">
+              <ProjectorName displayName={pending.displayName} invitedBy={pending.invitedBy} large />
+            </div>
           ) : (
-            <ProjectorName displayName={spin ?? 'READY?'} invitedBy={spin ? undefined : 'Press DRAW or the space bar'} large />
+            <>
+              <ProjectorName displayName={spin ?? 'READY?'} large />
+              {spin ? null : <p className="mt-4 text-sm sm:text-base text-slate-300">{DRAW_HINT}</p>}
+            </>
           )}
         </div>
-        {pending ? (
+        {reel ? (
+          <p className="text-slate-400">Drawing…</p>
+        ) : pending ? (
           <div className="flex w-full flex-col gap-3 sm:flex-row">
             <button type="button" disabled={busy || profile.role !== 'admin'} className="flex-1 rounded-2xl bg-green-600 py-4 text-lg font-black" onClick={() => void resolve('claimed')}>
               ✔ Claimed

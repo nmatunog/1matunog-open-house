@@ -15,6 +15,12 @@ export const ADMIN_COPY = {
   guestEmptyNoGuests: 'Nobody has checked in to this event yet.',
   historyEmptyNoEvent: 'There is no raffle history yet because there is no Open House event.',
   historyEmptyNoDraws: 'No raffle draws have been made for this event yet.',
+  openCheckInNow: 'Open check-in now',
+  openCheckInNowConfirm:
+    'Open check-in now? Guests can check in immediately, even before the scheduled start.',
+  drawHint: 'Press DRAW or the space bar',
+  editEvent: 'Edit event',
+  save: 'Save',
 } as const;
 
 export const ADMIN_LOG = {
