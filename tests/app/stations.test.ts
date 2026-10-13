@@ -21,17 +21,17 @@ describe('station QR tokens', () => {
   });
 
   it('printed cards encode the live Netlify guest URL, never localhost or Firebase', () => {
-    expect(PRODUCTION_SITE_ORIGIN).toBe('https://aia-openhouse.netlify.app');
+    expect(PRODUCTION_SITE_ORIGIN).toBe('https://1cmaopenhouse.netlify.app');
     expect(printedStationQrUrl('evt-1', 'deadbeef')).toBe(
-      'https://aia-openhouse.netlify.app/s/evt-1/deadbeef',
+      'https://1cmaopenhouse.netlify.app/s/evt-1/deadbeef',
     );
-    expect(isUnsafeQrOrigin('https://aia-openhouse.netlify.app')).toBe(false);
+    expect(isUnsafeQrOrigin('https://1cmaopenhouse.netlify.app')).toBe(false);
     expect(isUnsafeQrOrigin('http://localhost:5173')).toBe(true);
     expect(isUnsafeQrOrigin('https://cma-dashboard-01.web.app')).toBe(true);
-    expect(isUnsafeQrOrigin('https://deploy-preview-2--aia-openhouse.netlify.app')).toBe(true);
+    expect(isUnsafeQrOrigin('https://deploy-preview-2--1cmaopenhouse.netlify.app')).toBe(true);
     expect(printedStationOrigin('http://localhost:5173')).toBe(PRODUCTION_SITE_ORIGIN);
     expect(stationQrUrl(PRODUCTION_SITE_ORIGIN, 'evt-1', 'aa')).toBe(
-      'https://aia-openhouse.netlify.app/s/evt-1/aa',
+      'https://1cmaopenhouse.netlify.app/s/evt-1/aa',
     );
   });
 

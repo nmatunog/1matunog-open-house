@@ -30,7 +30,7 @@ describe('no hard-coded event date literals in app code', () => {
     expect(print).toContain('printedStationQrUrl');
     expect(print).not.toContain('window.location.origin');
     expect(print).not.toMatch(/localhost|firebaseapp\.com|\.web\.app/);
-    expect(stations).toContain("PRODUCTION_SITE_ORIGIN = 'https://aia-openhouse.netlify.app'");
+    expect(stations).toContain("PRODUCTION_SITE_ORIGIN = 'https://1cmaopenhouse.netlify.app'");
     expect(netlify).toMatch(/from\s*=\s*"\/s\/\*/);
   });
 });

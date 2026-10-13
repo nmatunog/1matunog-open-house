@@ -11,7 +11,7 @@ This is a new app. It does **not** use the old admin password. Admins sign in wi
 3. Scan the printed QR at each station (or type the small backup code). Stamps are saved on this phone.
 4. Done — show this at the rewards counter
 
-Printed station cards encode `https://aia-openhouse.netlify.app/s/<eventId>/<token>` (not localhost or a Firebase domain). A phone-camera scan opens the app, checks the guest in if needed, then stamps that station. Netlify rewrites `/s/*` to the SPA.
+Printed station cards encode `https://1cmaopenhouse.netlify.app/s/<eventId>/<token>` (not localhost or a Firebase domain). A phone-camera scan opens the app, checks the guest in if needed, then stamps that station. Netlify rewrites `/s/*` to the SPA.
 
 ## What admins see
 

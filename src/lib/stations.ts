@@ -56,7 +56,7 @@ export function stampDocId(anonUid: string, boothId: string): string {
 }
 
 /** Live guest site. Printed cards always encode this — never localhost, a preview, or Firebase Hosting. */
-export const PRODUCTION_SITE_ORIGIN = 'https://aia-openhouse.netlify.app';
+export const PRODUCTION_SITE_ORIGIN = 'https://1cmaopenhouse.netlify.app';
 
 export function isUnsafeQrOrigin(origin: string): boolean {
   try {
@@ -64,7 +64,7 @@ export function isUnsafeQrOrigin(origin: string): boolean {
     const host = url.hostname.toLowerCase();
     if (host === 'localhost' || host === '127.0.0.1') return true;
     if (host.endsWith('.firebaseapp.com') || host.endsWith('.web.app')) return true;
-    if (host !== 'aia-openhouse.netlify.app') return true;
+    if (host !== '1cmaopenhouse.netlify.app') return true;
     return url.protocol !== 'https:';
   } catch {
     return true;
