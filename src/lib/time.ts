@@ -31,6 +31,19 @@ export function formatManilaTime(value: Date): string {
   }).format(value);
 }
 
+/** 24-hour `HH:mm` in Manila, for time inputs. */
+export function formatManilaHm(value: Date): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: MANILA,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(value);
+  const hour = parts.find((p) => p.type === 'hour')?.value ?? '00';
+  const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  return `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+}
+
 export function todayYmdManila(now = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: MANILA,

@@ -17,19 +17,27 @@ export function raffleWindowOpen(event: OhEvent, now = new Date()): boolean {
   return isInWindow(now, toDate(event.raffle.opensAt), toDate(event.raffle.closesAt));
 }
 
+/** Every station on this event. Stamp documents, unique by station, must reach this. */
+export function stationsNeeded(event: { booths: { id: string }[] }): number {
+  return event.booths.length;
+}
+
+export function guestListStatus(uniqueStations: number, needed: number): 'Complete' | 'Open' {
+  return needed > 0 && uniqueStations >= needed ? 'Complete' : 'Open';
+}
+
 export function isEligibleToWin(
   checkin: Checkin,
   event: OhEvent,
   winner: WinnerLock | undefined,
-  stampCount: number,
+  uniqueStations: number,
 ): boolean {
-  const checkedInAt = toDate(checkin.checkedInAt);
-  if (!checkedInAt) return false;
-  if (!isInWindow(checkedInAt, toDate(event.raffle.opensAt), toDate(event.raffle.closesAt))) {
-    return false;
-  }
-  // Count stamp documents, never the self-reported check-in counter.
-  if (stampCount < event.raffle.minStamps) return false;
+  if (!checkin.personId) return false;
+  const needed = stationsNeeded(event);
+  if (needed <= 0) return false;
+  // Count unique stamp-document stations for this person and event — never
+  // checkins.stampsCompleted, and never whether they checked in inside the raffle window.
+  if (uniqueStations < needed) return false;
   if (!winner) return true;
   if (winner.status === 'no_show' || winner.status === 'pending' || winner.status === 'void') {
     return false;
@@ -42,10 +50,10 @@ export function eligiblePool(
   checkins: Checkin[],
   event: OhEvent,
   winners: Map<string, WinnerLock>,
-  stampCountByPerson: Map<string, number>,
+  uniqueStationsByPerson: Map<string, number>,
 ): Checkin[] {
   return checkins.filter((c) =>
-    isEligibleToWin(c, event, winners.get(c.personId), stampCountByPerson.get(c.personId) ?? 0),
+    isEligibleToWin(c, event, winners.get(c.personId), uniqueStationsByPerson.get(c.personId) ?? 0),
   );
 }
 

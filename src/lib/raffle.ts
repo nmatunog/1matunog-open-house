@@ -9,7 +9,7 @@ import {
 } from 'firebase/firestore';
 import { projectorName } from './displayName';
 import { eligiblePool } from './eligibility';
-import { countStampsByPerson, parseStamp } from './stations';
+import { countUniqueStationsByPerson, parseStamp } from './stations';
 import type { Checkin, Draw, OhEvent, WinnerLock } from '../types';
 import { toDate } from './time';
 import { Timestamp } from 'firebase/firestore';
@@ -110,7 +110,7 @@ export async function loadLivePool(
   for (const d of winnerSnaps.docs) {
     winners.set(d.id, parseWinner(d.id, d.data() as Record<string, unknown>));
   }
-  const stampCounts = countStampsByPerson(
+  const stampCounts = countUniqueStationsByPerson(
     stampSnaps.docs.map((d) => parseStamp(d.id, d.data() as Record<string, unknown>)),
   );
   return { event, checkins, winners, pool: eligiblePool(checkins, event, winners, stampCounts) };
