@@ -39,7 +39,10 @@ import {
   writeStationMaterials,
 } from '../lib/stations';
 import { formatManilaDate, formatManilaTime, manilaDateTimeToDate, todayYmdManila, toDate } from '../lib/time';
-import type { AdminProfile, Checkin, Draw, DuplicateFlag, OhEvent, OhRole, Person, StationStamp } from '../types';
+import type { AdminProfile, Checkin, Draw, DuplicateFlag, OhEvent, Person, StationStamp } from '../types';
+import { ADMIN_COPY, ADMIN_LOG } from './adminCopy';
+import { AdminLoadError, AdminLoading, GuestListEmpty, HistoryEmpty, NoEventToday } from './AdminEmptyStates';
+import { eventsFromSnapshot, readAdminRole } from './eventsFromSnapshot';
 import { PrintStationCards } from './PrintStationCards';
 
 type Screen = 'today' | 'list' | 'guest' | 'history' | 'new' | 'more';
@@ -68,12 +71,17 @@ export function AdminApp() {
       }
       const email = next.email.toLowerCase();
       const { db } = getFirebase();
-      const snap = await getDoc(doc(db, 'oh_admins', email));
-      if (!snap.exists() || snap.data()?.active !== true) {
-        setProfile('missing');
-      } else {
-        const role = (snap.data()?.role as OhRole) === 'admin' ? 'admin' : 'viewer';
-        setProfile({ uid: next.uid, email, role, active: true });
+      try {
+        const snap = await getDoc(doc(db, 'oh_admins', email));
+        if (!snap.exists() || snap.data()?.active !== true) {
+          setProfile('missing');
+        } else {
+          setProfile({ uid: next.uid, email, role: readAdminRole(snap.data()?.role), active: true });
+        }
+      } catch (err) {
+        console.error(ADMIN_LOG.auth, err);
+        setAuthError(ADMIN_COPY.authCheckError);
+        setProfile(null);
       }
       setAuthReady(true);
     });
@@ -181,24 +189,48 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPerson, setSelectedPerson] = useState<Checkin | null>(null);
   const [syncNote, setSyncNote] = useState('');
+  const [eventsReady, setEventsReady] = useState(false);
+  const [configReady, setConfigReady] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     const { db } = getFirebase();
-    const unsubEvents = onSnapshot(collection(db, 'oh_events'), (snap) => {
-      const list = snap.docs.map((d) => {
-        const data = d.data() as Omit<OhEvent, 'id'>;
-        return { ...data, id: d.id, pendingDrawNo: data.pendingDrawNo ?? null, lastDrawNo: data.lastDrawNo ?? 0 } as OhEvent;
-      });
-      list.sort((a, b) => b.eventDate.localeCompare(a.eventDate));
-      setEvents(list);
-    });
-    const unsubCfg = onSnapshot(doc(db, 'oh_config', 'public'), (snap) => {
-      if (snap.exists()) {
-        const id = String((snap.data() as { currentEventId?: string }).currentEventId ?? '');
-        setCurrentId(id);
-        setEventId((prev) => prev || id);
-      }
-    });
+    const unsubEvents = onSnapshot(
+      collection(db, 'oh_events'),
+      (snap) => {
+        try {
+          setEvents(
+            eventsFromSnapshot(snap.docs.map((d) => ({ id: d.id, data: () => d.data() as Record<string, unknown> }))),
+          );
+          setEventsReady(true);
+        } catch (err) {
+          console.error(ADMIN_LOG.events, err);
+          setLoadError(ADMIN_COPY.loadError);
+          setEventsReady(true);
+        }
+      },
+      (err) => {
+        console.error(ADMIN_LOG.events, err);
+        setLoadError(ADMIN_COPY.loadError);
+        setEventsReady(true);
+      },
+    );
+    const unsubCfg = onSnapshot(
+      doc(db, 'oh_config', 'public'),
+      (snap) => {
+        if (snap.exists()) {
+          const id = String((snap.data() as { currentEventId?: string }).currentEventId ?? '');
+          setCurrentId(id);
+          setEventId((prev) => prev || id);
+        }
+        setConfigReady(true);
+      },
+      (err) => {
+        console.error(ADMIN_LOG.config, err);
+        setLoadError((prev) => prev || ADMIN_COPY.loadError);
+        setConfigReady(true);
+      },
+    );
     return () => {
       unsubEvents();
       unsubCfg();
@@ -211,17 +243,38 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
   useEffect(() => {
     if (!selectedEventId) return;
     const { db } = getFirebase();
-    const unsubC = onSnapshot(collection(db, 'oh_events', selectedEventId, 'checkins'), (snap) => {
-      setCheckins(snap.docs.map((d) => parseCheckin(d.id, d.data() as Record<string, unknown>)));
-    });
-    const unsubS = onSnapshot(collection(db, 'oh_events', selectedEventId, 'stamps'), (snap) => {
-      setStamps(snap.docs.map((d) => parseStamp(d.id, d.data() as Record<string, unknown>)));
-    });
-    const unsubD = onSnapshot(collection(db, 'oh_events', selectedEventId, 'draws'), (snap) => {
-      const list = snap.docs.map((d) => parseDraw(d.id, d.data() as Record<string, unknown>));
-      list.sort((a, b) => Number(a.id) - Number(b.id));
-      setDraws(list);
-    });
+    const unsubC = onSnapshot(
+      collection(db, 'oh_events', selectedEventId, 'checkins'),
+      (snap) => {
+        setCheckins(snap.docs.map((d) => parseCheckin(d.id, d.data() as Record<string, unknown>)));
+      },
+      (err) => {
+        console.error(ADMIN_LOG.checkins, err);
+        setLoadError(ADMIN_COPY.loadError);
+      },
+    );
+    const unsubS = onSnapshot(
+      collection(db, 'oh_events', selectedEventId, 'stamps'),
+      (snap) => {
+        setStamps(snap.docs.map((d) => parseStamp(d.id, d.data() as Record<string, unknown>)));
+      },
+      (err) => {
+        console.error(ADMIN_LOG.stamps, err);
+        setLoadError(ADMIN_COPY.loadError);
+      },
+    );
+    const unsubD = onSnapshot(
+      collection(db, 'oh_events', selectedEventId, 'draws'),
+      (snap) => {
+        const list = snap.docs.map((d) => parseDraw(d.id, d.data() as Record<string, unknown>));
+        list.sort((a, b) => Number(a.id) - Number(b.id));
+        setDraws(list);
+      },
+      (err) => {
+        console.error(ADMIN_LOG.draws, err);
+        setLoadError(ADMIN_COPY.loadError);
+      },
+    );
     return () => {
       unsubC();
       unsubS();
@@ -264,6 +317,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
   );
   const canWin = event ? eligiblePool(checkins, event, winners, stampCounts) : [];
   const pending = event && event.pendingDrawNo != null ? draws.find((d) => d.id === String(event.pendingDrawNo)) : null;
+  const ready = eventsReady && configReady;
 
   return (
     <AdminShell>
@@ -299,7 +353,12 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
         </nav>
       </header>
       <main className="mx-auto max-w-5xl p-4 pb-16">
-        {screen === 'today' && event ? (
+        {loadError ? <AdminLoadError message={loadError} /> : null}
+        {!loadError && !ready ? <AdminLoading /> : null}
+        {!loadError && ready && screen === 'today' && !event ? (
+          <NoEventToday isAdmin={isAdmin} onCreate={() => setScreen('new')} />
+        ) : null}
+        {!loadError && ready && screen === 'today' && event ? (
           <TodayScreen
             events={events}
             event={event}
@@ -317,7 +376,8 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             syncNote={syncNote}
           />
         ) : null}
-        {screen === 'list' && event ? (
+        {!loadError && ready && screen === 'list' && !event ? <GuestListEmpty hasEvent={false} /> : null}
+        {!loadError && ready && screen === 'list' && event ? (
           <GuestListScreen
             event={event}
             checkins={checkinsCounted}
@@ -328,7 +388,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             }}
           />
         ) : null}
-        {screen === 'guest' && event && selectedPerson ? (
+        {!loadError && ready && screen === 'guest' && event && selectedPerson ? (
           <GuestDetailScreen
             event={event}
             checkin={selectedPerson}
@@ -337,8 +397,9 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             onBack={() => setScreen('list')}
           />
         ) : null}
-        {screen === 'history' && event ? <HistoryScreen event={event} draws={draws} /> : null}
-        {screen === 'new' && isAdmin ? (
+        {!loadError && ready && screen === 'history' && !event ? <HistoryEmpty hasEvent={false} /> : null}
+        {!loadError && ready && screen === 'history' && event ? <HistoryScreen event={event} draws={draws} /> : null}
+        {!loadError && ready && screen === 'new' && isAdmin ? (
           <NewEventScreen
             last={events[0] ?? null}
             profile={profile}
@@ -547,6 +608,9 @@ function GuestListScreen({
   isAdmin: boolean;
   onSelect: (c: Checkin) => void;
 }) {
+  if (checkins.length === 0) {
+    return <GuestListEmpty hasEvent />;
+  }
   return (
     <div className="space-y-3">
       <h2 className="font-bold">Guest list · {checkins.length}</h2>
@@ -631,6 +695,9 @@ function GuestDetailScreen({
 }
 
 function HistoryScreen({ event, draws }: { event: OhEvent; draws: Draw[] }) {
+  if (draws.length === 0) {
+    return <HistoryEmpty hasEvent />;
+  }
   return (
     <div className="space-y-3">
       <h2 className="font-bold">History</h2>

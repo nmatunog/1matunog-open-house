@@ -8,13 +8,16 @@ import { Timestamp, serverTimestamp, type Firestore } from 'firebase/firestore';
 
 export const PROJECT_ID = 'cma-dashboard-01';
 
-export async function makeEnv(): Promise<RulesTestEnvironment> {
+export async function makeEnv(options?: {
+  rulesPath?: string;
+  projectId?: string;
+}): Promise<RulesTestEnvironment> {
   return initializeTestEnvironment({
-    projectId: PROJECT_ID,
+    projectId: options?.projectId ?? PROJECT_ID,
     firestore: {
       host: '127.0.0.1',
       port: 8080,
-      rules: readFileSync(resolve('firestore.rules'), 'utf8'),
+      rules: readFileSync(resolve(options?.rulesPath ?? 'firestore.rules'), 'utf8'),
     },
   });
 }
