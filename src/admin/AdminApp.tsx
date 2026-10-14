@@ -41,10 +41,12 @@ import {
   rotateStationMaterials,
   writeStationMaterials,
 } from '../lib/stations';
+import { boothIdsDoneForPerson, shouldShowAddStamps } from '../lib/adminStamps';
 import { detailsFromEvent, eventDetailsUpdate } from '../lib/eventDetails';
 import { formatManilaDate, formatManilaTime, manilaDateTimeToDate, todayYmdManila, toDate } from '../lib/time';
 import type { AdminProfile, Checkin, Draw, DuplicateFlag, OhEvent, Person, StationStamp } from '../types';
 import { ADMIN_COPY, ADMIN_LOG } from './adminCopy';
+import { AddStampsPanel } from './AddStampsPanel';
 import { AdminLoadError, AdminLoading, GuestListEmpty, HistoryEmpty, NoEventToday } from './AdminEmptyStates';
 import { eventsFromSnapshot, readAdminRole } from './eventsFromSnapshot';
 import { PrintStationCards } from './PrintStationCards';
@@ -397,6 +399,7 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
           <GuestListScreen
             event={event}
             checkins={checkinsCounted}
+            stamps={stamps}
             isAdmin={isAdmin}
             onSelect={(c) => {
               setSelectedPerson(c);
@@ -637,14 +640,17 @@ function Stat({ label, value }: { label: string; value: string }) {
 function GuestListScreen({
   event,
   checkins,
+  stamps,
   isAdmin,
   onSelect,
 }: {
   event: OhEvent;
   checkins: Checkin[];
+  stamps: StationStamp[];
   isAdmin: boolean;
   onSelect: (c: Checkin) => void;
 }) {
+  const [addingId, setAddingId] = useState<string | null>(null);
   if (checkins.length === 0) {
     return <GuestListEmpty hasEvent />;
   }
@@ -660,16 +666,41 @@ function GuestListScreen({
       </button>
       <ul className="divide-y rounded-2xl bg-white shadow">
         {checkins.map((c) => {
-          const status = guestListStatus(c.stampsCompleted, event.booths.length);
+          const doneBoothIds = boothIdsDoneForPerson(stamps, c.personId);
+          const status = guestListStatus(doneBoothIds.length, event.booths.length);
+          const showAdd = shouldShowAddStamps({
+            isAdmin,
+            uniqueStations: doneBoothIds.length,
+            needed: event.booths.length,
+          });
           return (
           <li key={c.personId}>
-            <button type="button" className="flex w-full items-center justify-between px-4 py-3 text-left" onClick={() => onSelect(c)}>
-              <span>
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <button type="button" className="min-w-0 flex-1 text-left" onClick={() => onSelect(c)}>
                 <SafeText className="font-semibold" value={c.name} />
                 <SafeText className="block text-xs text-gray-500" value={c.invitedBy ? `Invited by ${c.invitedBy}` : '—'} />
-              </span>
-              {isAdmin ? <span className="text-xs text-gray-400">{status}</span> : null}
-            </button>
+              </button>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                {isAdmin ? <span className="text-xs text-gray-400">{status}</span> : null}
+                {showAdd ? (
+                  <button
+                    type="button"
+                    className="rounded-xl bg-brand px-3 py-2 text-sm font-bold text-white"
+                    onClick={() => setAddingId((id) => (id === c.personId ? null : c.personId))}
+                  >
+                    {ADMIN_COPY.addStamps}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {addingId === c.personId ? (
+              <AddStampsPanel
+                event={event}
+                checkin={c}
+                doneBoothIds={doneBoothIds}
+                onClose={() => setAddingId(null)}
+              />
+            ) : null}
           </li>
           );
         })}

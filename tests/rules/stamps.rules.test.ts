@@ -189,4 +189,50 @@ describe('OH-P1.1 station stamps', () => {
     await assertSucceeds(getDocs(collection(db, 'oh_events', 'E', 'stampKeys')));
     await assertSucceeds(getDocs(collection(db, 'oh_events', 'E', 'stamps')));
   });
+
+  it('admin can create a stamp for another person at the guest path, with source admin', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'oh_events', 'E', 'checkins', 'P'), validCheckin('guest-uid'));
+    });
+    const adminDb = env.authenticatedContext('nilo', adminAuth()).firestore();
+    const payload = {
+      ...(await validStamp('E', TOKEN_E, 'guest-uid')),
+      source: 'admin',
+    };
+    await assertSucceeds(setDoc(doc(adminDb, 'oh_events', 'E', 'stamps', 'guest-uid_booth-1'), payload));
+  });
+
+  it('admin can still create a guest-shaped stamp when the check-in window has closed', async () => {
+    await seedOpenEvent(env, 'E', {
+      checkInOpensAt: Timestamp.fromMillis(0),
+      checkInClosesAt: Timestamp.fromMillis(1000),
+    });
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'oh_events', 'E', 'checkins', 'P'), validCheckin('guest-uid'));
+    });
+    const adminDb = env.authenticatedContext('nilo', adminAuth()).firestore();
+    await assertSucceeds(
+      setDoc(doc(adminDb, 'oh_events', 'E', 'stamps', 'guest-uid_booth-1'), {
+        ...(await validStamp('E', TOKEN_E, 'guest-uid')),
+        source: 'admin',
+      }),
+    );
+  });
+
+  it('viewer cannot create a stamp for another person', async () => {
+    await seedOhAdmin(env, 'viewer@example.com', 'viewer');
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'oh_events', 'E', 'checkins', 'P'), validCheckin('guest-uid'));
+    });
+    const viewerDb = env.authenticatedContext('viewer', {
+      email: 'viewer@example.com',
+      email_verified: true,
+    }).firestore();
+    await assertFails(
+      setDoc(doc(viewerDb, 'oh_events', 'E', 'stamps', 'guest-uid_booth-1'), {
+        ...(await validStamp('E', TOKEN_E, 'guest-uid')),
+        source: 'admin',
+      }),
+    );
+  });
 });

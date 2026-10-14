@@ -71,7 +71,12 @@ service cloud.firestore {
         allow get: if ohIsViewer()
           || (ohSignedIn() && stampId.matches('^' + request.auth.uid + '_.*'));
         allow list: if ohIsViewer();
-        allow create: if ohSignedIn()
+        // Admin create is a separate first clause. Live guest create still
+        // requires status==open, the check-in window, and the guest uid.
+        // Paste-only extra line if the live file has not picked this up yet:
+        //   allow create: if ohIsAdmin() || ( …existing guest create… );
+        allow create: if ohIsAdmin()
+          || (ohSignedIn()
           && ohEvent(eid).status == 'open'
           && request.time >= ohEvent(eid).checkInOpensAt && request.time <= ohEvent(eid).checkInClosesAt
           && request.resource.data.keys().hasOnly(['boothId','anonUid','personId','stampedAt','stampKeyId'])
@@ -90,7 +95,7 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/oh_events/$(eid)/checkins/$(request.resource.data.personId)).data.anonUid == request.auth.uid
           && exists(/databases/$(database)/documents/oh_events/$(eid)/stampKeys/$(request.resource.data.stampKeyId))
           && get(/databases/$(database)/documents/oh_events/$(eid)/stampKeys/$(request.resource.data.stampKeyId)).data.boothId == request.resource.data.boothId
-          && get(/databases/$(database)/documents/oh_events/$(eid)/stampKeys/$(request.resource.data.stampKeyId)).data.eventId == eid;
+          && get(/databases/$(database)/documents/oh_events/$(eid)/stampKeys/$(request.resource.data.stampKeyId)).data.eventId == eid);
         allow update, delete: if ohIsAdmin();
       }
     }

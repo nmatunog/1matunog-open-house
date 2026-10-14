@@ -271,6 +271,74 @@ describe('AdminApp with an empty database', () => {
     expect(screen.getByText(ADMIN_COPY.historyEmptyNoDraws)).toBeInTheDocument();
   });
 
+  it('shows Add stamps for an incomplete guest and hides it when they are Complete', async () => {
+    const now = Date.now();
+    scenario.events = [
+      {
+        id: 'evt-1',
+        data: () => ({
+          ...sampleEvent().data(),
+          booths: [
+            { id: 'booth-1', name: 'Products', codeHash: 'x' },
+            { id: 'booth-2', name: 'Vitality', codeHash: 'x' },
+          ],
+        }),
+      },
+    ];
+    scenario.configExists = true;
+    scenario.currentEventId = 'evt-1';
+    scenario.checkins = [
+      {
+        id: 'p-open',
+        data: () => ({
+          name: 'Maria Santos',
+          email: 'maria@example.com',
+          phone: '+639171234567',
+          invitedBy: 'Ana',
+          stampsCompleted: 0,
+          checkedInAt: { toDate: () => new Date(now) },
+          anonUid: 'guest-open',
+          consentVersion: 'v1',
+        }),
+      },
+      {
+        id: 'p-done',
+        data: () => ({
+          name: 'Juan Cruz',
+          email: 'juan@example.com',
+          phone: '+639171234568',
+          invitedBy: 'Ben',
+          stampsCompleted: 0,
+          checkedInAt: { toDate: () => new Date(now) },
+          anonUid: 'guest-done',
+          consentVersion: 'v1',
+        }),
+      },
+    ];
+    scenario.stamps = [
+      {
+        id: 'guest-done_booth-1',
+        data: () => ({ boothId: 'booth-1', personId: 'p-done', anonUid: 'guest-done', stampKeyId: 'k1' }),
+      },
+      {
+        id: 'guest-done_booth-2',
+        data: () => ({ boothId: 'booth-2', personId: 'p-done', anonUid: 'guest-done', stampKeyId: 'k2' }),
+      },
+    ];
+    renderAdmin();
+    await waitFor(() => {
+      expect(screen.getByText('Start Draw')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Guest list' })[0]!);
+    expect(screen.getByText('Maria Santos')).toBeInTheDocument();
+    expect(screen.getByText('Juan Cruz')).toBeInTheDocument();
+    const addButtons = screen.getAllByRole('button', { name: ADMIN_COPY.addStamps });
+    expect(addButtons).toHaveLength(1);
+    fireEvent.click(addButtons[0]!);
+    expect(screen.getByRole('button', { name: ADMIN_COPY.markAllStationsDone })).toBeInTheDocument();
+    expect(screen.getByText(ADMIN_COPY.addStampsHint)).toBeInTheDocument();
+  });
+
   it('shows a plain-words message if the admin listing cannot be read', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     scenario.adminGetError = new Error('unavailable');
