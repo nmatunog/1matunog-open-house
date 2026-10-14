@@ -28,6 +28,7 @@ import { projectorName } from '../lib/displayName';
 import { formatManilaDate } from '../lib/time';
 import type { GuestDetails, OhEvent, PassportSession } from '../types';
 import { PrivacyNotice } from './PrivacyNotice';
+import { applySuperCodeStamps, typedCodeIsSuperCode } from '../lib/superCode';
 import { applyStationStamp, needsCheckInBeforeStamp, stampConfirmCopy } from './applyStamp';
 import {
   STAMPS_LOADING_MESSAGE,
@@ -41,7 +42,7 @@ import {
 type Step = 'welcome' | 'details' | 'passport' | 'done' | 'unavailable';
 
 type StampFlash = {
-  kind: 'stamped' | 'already';
+  kind: 'stamped' | 'already' | 'all';
   stationNo: number;
   doneCount: number;
   needed: number;
@@ -383,6 +384,53 @@ export function GuestApp() {
   async function onTypedStamp() {
     if (!typedCode.trim()) {
       setCodeError('Type the 6-letter station code from the card.');
+      return;
+    }
+    if (event && (await typedCodeIsSuperCode(event, typedCode))) {
+      const { auth, db } = getFirebase();
+      let anonUid: string;
+      try {
+        anonUid = await waitForGuestUid(auth);
+      } catch {
+        setCodeError('Could not start a guest session. Please refresh.');
+        return;
+      }
+      const pid = personId ?? loadDeviceCheckin(event.id)?.personId;
+      if (!anonUid || !pid) {
+        setScanNote('First a quick check-in, then we will stamp this station.');
+        setStep('details');
+        return;
+      }
+      setBusy(true);
+      setCodeError('');
+      try {
+        const result = await applySuperCodeStamps({
+          db,
+          event,
+          typed: typedCode,
+          anonUid,
+          personId: pid,
+        });
+        if (!result.ok) {
+          setCodeError(result.message);
+          return;
+        }
+        const next = mergeStationIds(stampedRef.current, result.boothIds);
+        stampedRef.current = next;
+        setStamped(next);
+        setShowTyped(false);
+        setTypedCode('');
+        setStep(next.length >= needed && needed > 0 ? 'done' : 'passport');
+        setFlash({
+          kind: 'all',
+          stationNo: 0,
+          doneCount: next.length,
+          needed,
+          name: 'All stations',
+        });
+      } finally {
+        setBusy(false);
+      }
       return;
     }
     await runStamp(typedCode);

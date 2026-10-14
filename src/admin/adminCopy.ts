@@ -21,6 +21,21 @@ export const ADMIN_COPY = {
   drawHint: 'Press DRAW or the space bar',
   editEvent: 'Edit event',
   save: 'Save',
+  addStamps: 'Add stamps',
+  addStampsHelp:
+    'This guest could not scan every station. Tick the ones they visited, or mark every station done so they can join the raffle.',
+  markAllStations: 'Mark all stations done',
+  markAllConfirm:
+    'Give this guest a stamp for every station? They will count as Complete and can join the raffle.',
+  saveStamps: 'Save stamps',
+  saveStampsConfirm: 'Save these station stamps for this guest?',
+  addStampsSaved: 'Stamps saved. If every station is done, this guest can join the raffle.',
+  makeAllStationsCode: 'Make all-stations code',
+  makeAllStationsCodeConfirm:
+    'Make a one-event code guests can type to finish every station? You can turn it off any time.',
+  turnOffAllStationsCode: 'Turn off all-stations code',
+  turnOffAllStationsCodeConfirm: 'Turn off the all-stations code now? It will stop working for guests.',
+  allStationsCodeHelp: 'Tell this code to a guest who could not scan. It only works for this event.',
 } as const;
 
 export const ADMIN_LOG = {

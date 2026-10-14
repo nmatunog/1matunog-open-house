@@ -34,12 +34,22 @@ import { parsePerson, syncEventCheckins } from '../lib/peopleSync';
 import { drawAndLock, loadLivePool, parseCheckin, parseDraw, resolvePendingDraw } from '../lib/raffle';
 import { DRAW_HINT } from '../lib/reel';
 import {
+  SUPER_CODE_SECRET_ID,
+  newSuperCode,
+  superCodeEventFields,
+  superCodeEventHash,
+  superCodeExpiryDate,
+  superCodeStampKeyId,
+  superCodeStillValid,
+} from '../lib/superCode';
+import {
   buildStationMaterials,
   countStampsByBooth,
-  countUniqueStationsByPerson,
+  mergeAdminAndScanCounts,
   parseStamp,
-  rotateStationMaterials,
+  stationIdsByPerson,
   writeStationMaterials,
+  rotateStationMaterials,
 } from '../lib/stations';
 import { detailsFromEvent, eventDetailsUpdate } from '../lib/eventDetails';
 import { formatManilaDate, formatManilaTime, manilaDateTimeToDate, todayYmdManila, toDate } from '../lib/time';
@@ -47,6 +57,7 @@ import type { AdminProfile, Checkin, Draw, DuplicateFlag, OhEvent, Person, Stati
 import { ADMIN_COPY, ADMIN_LOG } from './adminCopy';
 import { AdminLoadError, AdminLoading, GuestListEmpty, HistoryEmpty, NoEventToday } from './AdminEmptyStates';
 import { eventsFromSnapshot, readAdminRole } from './eventsFromSnapshot';
+import { AddStampsForm } from './AddStampsForm';
 import { PrintStationCards } from './PrintStationCards';
 import { ProjectorReel } from './ProjectorReel';
 
@@ -315,7 +326,8 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
     return map;
   }, [draws]);
 
-  const stampCounts = useMemo(() => countUniqueStationsByPerson(stamps), [stamps]);
+  const stampBoothsByPerson = useMemo(() => stationIdsByPerson(stamps), [stamps]);
+  const stampCounts = useMemo(() => mergeAdminAndScanCounts(stamps, checkins), [stamps, checkins]);
   const boothStampCounts = useMemo(() => countStampsByBooth(stamps), [stamps]);
   const checkinsCounted = useMemo(
     () => checkins.map((c) => ({ ...c, stampsCompleted: stampCounts.get(c.personId) ?? 0 })),
@@ -398,6 +410,8 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
             event={event}
             checkins={checkinsCounted}
             isAdmin={isAdmin}
+            adminEmail={profile.email}
+            scannedByPerson={stampBoothsByPerson}
             onSelect={(c) => {
               setSelectedPerson(c);
               setScreen('guest');
@@ -407,8 +421,10 @@ function AdminHome({ profile }: { profile: AdminProfile }) {
         {!loadError && ready && screen === 'guest' && event && selectedPerson ? (
           <GuestDetailScreen
             event={event}
-            checkin={selectedPerson}
+            checkin={checkinsCounted.find((c) => c.personId === selectedPerson.personId) ?? selectedPerson}
             stampCount={stampCounts.get(selectedPerson.personId) ?? 0}
+            scannedBoothIds={stampBoothsByPerson.get(selectedPerson.personId) ?? []}
+            adminEmail={profile.email}
             isAdmin={isAdmin}
             onBack={() => setScreen('list')}
           />
@@ -497,6 +513,72 @@ function TodayScreen({
     const patch = openCheckInNowPatch(now, toDate(event.checkInClosesAt));
     await updateDoc(doc(getFirebase().db, 'oh_events', event.id), patch);
   }
+  const [superPlain, setSuperPlain] = useState('');
+  const [superNote, setSuperNote] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDoc(
+          doc(getFirebase().db, 'oh_events', event.id, 'stationSecrets', SUPER_CODE_SECRET_ID),
+        );
+        if (cancelled) return;
+        setSuperPlain(snap.exists() ? String((snap.data() as { token?: string }).token ?? '') : '');
+      } catch {
+        if (!cancelled) setSuperPlain('');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [event.id, event.superCodeEnabled]);
+
+  async function makeAllStationsCode() {
+    if (!confirm(ADMIN_COPY.makeAllStationsCodeConfirm)) return;
+    setSuperNote('Making the code…');
+    try {
+      const code = newSuperCode();
+      const hash = await superCodeEventHash(event.id, code);
+      const expires = superCodeExpiryDate(event);
+      const keyIds: string[] = [];
+      const { db } = getFirebase();
+      for (const booth of event.booths) {
+        const id = await superCodeStampKeyId(event.id, code, booth.id);
+        keyIds.push(id);
+        await setDoc(doc(db, 'oh_events', event.id, 'stampKeys', id), {
+          boothId: booth.id,
+          eventId: event.id,
+        });
+      }
+      await setDoc(doc(db, 'oh_events', event.id, 'stationSecrets', SUPER_CODE_SECRET_ID), {
+        token: code,
+        shortCode: code,
+        keyIds,
+      });
+      await updateDoc(doc(db, 'oh_events', event.id), superCodeEventFields({ hash, expiresAt: expires, enabled: true }));
+      setSuperPlain(code);
+      setSuperNote('Code is ready. Tell it to guests who could not scan.');
+    } catch {
+      setSuperNote('Could not make the code. Please try again.');
+    }
+  }
+
+  async function turnOffAllStationsCode() {
+    if (!confirm(ADMIN_COPY.turnOffAllStationsCodeConfirm)) return;
+    try {
+      const { db } = getFirebase();
+      const snap = await getDoc(doc(db, 'oh_events', event.id, 'stationSecrets', SUPER_CODE_SECRET_ID));
+      const keyIds = snap.exists() ? ((snap.data() as { keyIds?: string[] }).keyIds ?? []) : [];
+      await Promise.all(keyIds.map((id) => deleteDoc(doc(db, 'oh_events', event.id, 'stampKeys', id))));
+      await updateDoc(doc(db, 'oh_events', event.id), { superCodeEnabled: false });
+      await deleteDoc(doc(db, 'oh_events', event.id, 'stationSecrets', SUPER_CODE_SECRET_ID));
+      setSuperPlain('');
+      setSuperNote('The all-stations code is off.');
+    } catch {
+      setSuperNote('Could not turn the code off. Please try again.');
+    }
+  }
+
   async function rotateCodes() {
     if (
       !confirm(
@@ -530,6 +612,32 @@ function TodayScreen({
         <Stat label="Checked in" value={String(checkins.length)} />
         <Stat label="Can win now" value={String(canWinCount)} />
       </div>
+      {isAdmin && checkins.some((c) => guestListStatus(c.stampsCompleted, event.booths.length) === 'Open') ? (
+        <p className="rounded-xl bg-amber-50 p-3 text-sm">
+          Some guests are not Complete. Open Guest list and press Add stamps if they could not scan.
+        </p>
+      ) : null}
+      {isAdmin ? (
+        <div className="rounded-2xl bg-white p-4 shadow">
+          <p className="text-xs uppercase tracking-widest text-gray-500">{ADMIN_COPY.makeAllStationsCode}</p>
+          {superCodeStillValid(event) && superPlain ? (
+            <p className="mt-2 break-all text-center text-5xl font-black tracking-[0.15em]">{superPlain}</p>
+          ) : (
+            <p className="mt-2 text-sm text-gray-600">{ADMIN_COPY.allStationsCodeHelp}</p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="rounded-xl bg-gray-900 px-3 py-2 text-sm text-white" onClick={() => void makeAllStationsCode()}>
+              {ADMIN_COPY.makeAllStationsCode}
+            </button>
+            {event.superCodeEnabled ? (
+              <button type="button" className="rounded-xl bg-white px-3 py-2 text-sm shadow" onClick={() => void turnOffAllStationsCode()}>
+                {ADMIN_COPY.turnOffAllStationsCode}
+              </button>
+            ) : null}
+          </div>
+          {superNote ? <p className="mt-2 text-sm text-gray-700">{superNote}</p> : null}
+        </div>
+      ) : null}
       <div className="rounded-2xl bg-white p-4 shadow">
         <p className="text-xs uppercase tracking-widest text-gray-500">Stamps per station</p>
         <ul className="mt-2 divide-y">
@@ -638,19 +746,25 @@ function GuestListScreen({
   event,
   checkins,
   isAdmin,
+  adminEmail,
+  scannedByPerson,
   onSelect,
 }: {
   event: OhEvent;
   checkins: Checkin[];
   isAdmin: boolean;
+  adminEmail: string;
+  scannedByPerson: Map<string, string[]>;
   onSelect: (c: Checkin) => void;
 }) {
+  const [openFor, setOpenFor] = useState<string | null>(null);
   if (checkins.length === 0) {
     return <GuestListEmpty hasEvent />;
   }
   return (
     <div className="space-y-3">
       <h2 className="font-bold">Guest list · {checkins.length}</h2>
+      <p className="text-sm text-gray-600">Guests who could not scan: press Add stamps, then tick stations or mark all done.</p>
       <button
         type="button"
         className="rounded-xl bg-white px-3 py-2 text-sm shadow"
@@ -662,14 +776,37 @@ function GuestListScreen({
         {checkins.map((c) => {
           const status = guestListStatus(c.stampsCompleted, event.booths.length);
           return (
-          <li key={c.personId}>
-            <button type="button" className="flex w-full items-center justify-between px-4 py-3 text-left" onClick={() => onSelect(c)}>
-              <span>
+          <li key={c.personId} className="px-4 py-3">
+            <div className="flex w-full items-center justify-between gap-2">
+              <button type="button" className="flex-1 text-left" onClick={() => onSelect(c)}>
                 <SafeText className="font-semibold" value={c.name} />
                 <SafeText className="block text-xs text-gray-500" value={c.invitedBy ? `Invited by ${c.invitedBy}` : '—'} />
-              </span>
-              {isAdmin ? <span className="text-xs text-gray-400">{status}</span> : null}
-            </button>
+              </button>
+              {isAdmin ? (
+                <span className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">{status}</span>
+                  {status === 'Open' ? (
+                    <button
+                      type="button"
+                      className="rounded-lg bg-brand px-3 py-1 text-xs font-bold text-white"
+                      onClick={() => setOpenFor((id) => (id === c.personId ? null : c.personId))}
+                    >
+                      {ADMIN_COPY.addStamps}
+                    </button>
+                  ) : null}
+                </span>
+              ) : null}
+            </div>
+            {isAdmin && openFor === c.personId ? (
+              <div className="mt-3">
+                <AddStampsForm
+                  event={event}
+                  checkin={c}
+                  scannedBoothIds={scannedByPerson.get(c.personId) ?? []}
+                  adminEmail={adminEmail}
+                />
+              </div>
+            ) : null}
           </li>
           );
         })}
@@ -682,12 +819,16 @@ function GuestDetailScreen({
   event,
   checkin,
   stampCount,
+  scannedBoothIds,
+  adminEmail,
   isAdmin,
   onBack,
 }: {
   event: OhEvent;
   checkin: Checkin;
   stampCount: number;
+  scannedBoothIds: string[];
+  adminEmail: string;
   isAdmin: boolean;
   onBack: () => void;
 }) {
@@ -715,6 +856,9 @@ function GuestDetailScreen({
       <p className="text-sm">
         Stamps: {stampCount} of {event.booths.length}
       </p>
+      {isAdmin && guestListStatus(stampCount, event.booths.length) === 'Open' ? (
+        <AddStampsForm event={event} checkin={checkin} scannedBoothIds={scannedBoothIds} adminEmail={adminEmail} />
+      ) : null}
       {isAdmin ? (
         <>
           <label className="block text-sm">

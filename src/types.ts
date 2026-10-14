@@ -31,6 +31,9 @@ export type OhEvent = {
   createdBy: string;
   pendingDrawNo: number | null;
   lastDrawNo: number;
+  superCodeHash?: string;
+  superCodeEnabled?: boolean;
+  superCodeExpiresAt?: Timestamp;
 };
 
 export type Checkin = {
@@ -43,6 +46,10 @@ export type Checkin = {
   checkedInAt: Timestamp;
   anonUid: string;
   consentVersion: string;
+  /** Stations an admin granted. Used because published rules block admin create on /stamps. */
+  adminBoothIds?: string[];
+  adminStampBy?: string;
+  adminStampSource?: 'admin';
 };
 
 export type Draw = {

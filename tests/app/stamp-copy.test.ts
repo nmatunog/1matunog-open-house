@@ -16,6 +16,13 @@ describe('guest stamp confirmation copy', () => {
     });
   });
 
+  it('all-stations code says All stations stamped', () => {
+    expect(stampConfirmCopy('all', 0, 6, 6)).toEqual({
+      title: 'All stations stamped!',
+      subtitle: '6 of 6',
+    });
+  });
+
   it('asks for check-in first when this phone has no person yet, then stamps after', () => {
     expect(needsCheckInBeforeStamp({})).toBe(true);
     expect(needsCheckInBeforeStamp({ devicePersonId: 'p1' })).toBe(false);

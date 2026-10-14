@@ -11,11 +11,14 @@ export function needsCheckInBeforeStamp(args: {
 }
 
 export function stampConfirmCopy(
-  kind: 'stamped' | 'already',
+  kind: 'stamped' | 'already' | 'all',
   stationNo: number,
   doneCount: number,
   needed: number,
 ): { title: string; subtitle: string } {
+  if (kind === 'all') {
+    return { title: 'All stations stamped!', subtitle: `${doneCount} of ${needed}` };
+  }
   if (kind === 'already') {
     return { title: 'Already stamped', subtitle: `Station ${stationNo} · ${doneCount} of ${needed}` };
   }

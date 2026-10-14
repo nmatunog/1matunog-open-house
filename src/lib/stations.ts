@@ -274,3 +274,41 @@ export function countStampsByBooth(stamps: { boothId: string }[]): Map<string, n
 export function stampCountFor(personId: string, counts: Map<string, number>): number {
   return counts.get(personId) ?? 0;
 }
+
+export function uniqueStationIds(boothIds: Iterable<string>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of boothIds) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+export function stationIdsByPerson(stamps: { personId: string; boothId?: string }[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const stamp of stamps) {
+    if (!stamp.personId || !stamp.boothId) continue;
+    const list = map.get(stamp.personId) ?? [];
+    if (!list.includes(stamp.boothId)) list.push(stamp.boothId);
+    map.set(stamp.personId, list);
+  }
+  return map;
+}
+
+/** Scan docs plus admin-granted stations on the check-in. Deduped by station. */
+export function mergeAdminAndScanCounts(
+  stamps: { personId: string; boothId?: string }[],
+  checkins: { personId: string; adminBoothIds?: string[] }[],
+): Map<string, number> {
+  const scanned = stationIdsByPerson(stamps);
+  const granted = new Map(checkins.map((c) => [c.personId, c.adminBoothIds ?? []]));
+  const people = new Set<string>([...scanned.keys(), ...granted.keys()]);
+  const map = new Map<string, number>();
+  for (const personId of people) {
+    const count = uniqueStationIds([...(scanned.get(personId) ?? []), ...(granted.get(personId) ?? [])]).length;
+    if (count) map.set(personId, count);
+  }
+  return map;
+}

@@ -9,7 +9,8 @@ import {
 } from 'firebase/firestore';
 import { projectorName } from './displayName';
 import { eligiblePool } from './eligibility';
-import { countUniqueStationsByPerson, parseStamp } from './stations';
+import { parseAdminBoothIds } from './adminStamps';
+import { mergeAdminAndScanCounts, parseStamp } from './stations';
 import type { Checkin, Draw, OhEvent, WinnerLock } from '../types';
 import { toDate } from './time';
 import { Timestamp } from 'firebase/firestore';
@@ -54,6 +55,9 @@ function asEvent(id: string, data: Record<string, unknown>): OhEvent {
     createdBy: String(data.createdBy ?? ''),
     pendingDrawNo: (data.pendingDrawNo as number | null | undefined) ?? null,
     lastDrawNo: Number(data.lastDrawNo ?? 0),
+    superCodeHash: typeof data.superCodeHash === 'string' ? data.superCodeHash : undefined,
+    superCodeEnabled: data.superCodeEnabled === true,
+    superCodeExpiresAt: data.superCodeExpiresAt as OhEvent['superCodeExpiresAt'],
   };
 }
 
@@ -68,6 +72,9 @@ export function parseCheckin(id: string, data: Record<string, unknown>): Checkin
     checkedInAt: data.checkedInAt as Checkin['checkedInAt'],
     anonUid: String(data.anonUid ?? ''),
     consentVersion: String(data.consentVersion ?? ''),
+    adminBoothIds: parseAdminBoothIds(data.adminBoothIds),
+    adminStampBy: typeof data.adminStampBy === 'string' ? data.adminStampBy : undefined,
+    adminStampSource: data.adminStampSource === 'admin' ? 'admin' : undefined,
   };
 }
 
@@ -110,8 +117,9 @@ export async function loadLivePool(
   for (const d of winnerSnaps.docs) {
     winners.set(d.id, parseWinner(d.id, d.data() as Record<string, unknown>));
   }
-  const stampCounts = countUniqueStationsByPerson(
+  const stampCounts = mergeAdminAndScanCounts(
     stampSnaps.docs.map((d) => parseStamp(d.id, d.data() as Record<string, unknown>)),
+    checkins,
   );
   return { event, checkins, winners, pool: eligiblePool(checkins, event, winners, stampCounts) };
 }
