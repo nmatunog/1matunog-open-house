@@ -21,6 +21,15 @@ export const ADMIN_COPY = {
   drawHint: 'Press DRAW or the space bar',
   editEvent: 'Edit event',
   save: 'Save',
+  addStamps: 'Add stamps',
+  addStampsHint: 'Tick the stations they already visited, or mark all stations done.',
+  addStampsConfirmAll:
+    'Add a stamp for every remaining station for this guest? They will show as Complete and can be picked in the raffle.',
+  markAllStationsDone: 'Mark all stations done',
+  saveTheseStamps: 'Save these stamps',
+  addStampsNone: 'Tick at least one station, or mark all stations done.',
+  addStampsSaved: 'Stamps saved. They will show as Complete if every station is done.',
+  addStampsError: 'Could not save those stamps. Please try again. If it still fails, ask Nilo.',
 } as const;
 
 export const ADMIN_LOG = {
