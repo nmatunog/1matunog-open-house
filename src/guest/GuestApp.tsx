@@ -39,6 +39,7 @@ import {
   firestoreStampReader,
   loadStampBoothIdsFromDocs,
   mergeStationIds,
+  scopedStampBoothIds,
   stampProgressFromDocs,
   waitForGuestUid,
 } from './guestStamps';
@@ -87,6 +88,7 @@ export function GuestApp() {
   const [stampRefreshNote, setStampRefreshNote] = useState('');
   const [sessionLost, setSessionLost] = useState(false);
   const stampedRef = useRef<string[]>([]);
+  const stampOwnerRef = useRef<{ eventId: string; personId: string } | null>(null);
   const applyKeyRef = useRef<string>('');
   const runStampRef = useRef<(token: string) => Promise<void>>(async () => {});
 
@@ -122,12 +124,22 @@ export function GuestApp() {
       const device = loadDeviceCheckin(loaded.id);
       const localPersonId = saved?.personId || device?.personId;
       if (localPersonId) {
-        const localStamps = mergeStationIds(saved?.stampedBoothIds ?? [], loadStampBoothIds(loaded.id, localPersonId));
-        if (localStamps.length) {
-          stampedRef.current = localStamps;
-          setStamped(localStamps);
-          setStampsReady(true);
-        }
+        const sessionStamps =
+          !saved?.personId || saved.personId === localPersonId ? (saved?.stampedBoothIds ?? []) : [];
+        const localStamps = scopedStampBoothIds({
+          booths: loaded.booths,
+          savedIds: mergeStationIds(sessionStamps, loadStampBoothIds(loaded.id, localPersonId)),
+          sameOwner: false,
+        });
+        stampOwnerRef.current = { eventId: loaded.id, personId: localPersonId };
+        stampedRef.current = localStamps;
+        setStamped(localStamps);
+        setStampsReady(localStamps.length > 0);
+      } else {
+        stampOwnerRef.current = null;
+        stampedRef.current = [];
+        setStamped([]);
+        setStampsReady(false);
       }
       if (saved) {
         setDetails(saved.details);
@@ -194,17 +206,32 @@ export function GuestApp() {
   useEffect(() => {
     if (!event) return;
     const prior = loadPassportSession(event.id);
+    const ownerMatches = Boolean(
+      personId &&
+        stampOwnerRef.current?.eventId === event.id &&
+        stampOwnerRef.current?.personId === personId,
+    );
+    const stampIds = scopedStampBoothIds({
+      booths: event.booths,
+      savedIds:
+        stampsReady && ownerMatches
+          ? stamped
+          : personId
+            ? loadStampBoothIds(event.id, personId)
+            : (prior?.stampedBoothIds ?? []),
+      sameOwner: false,
+    });
     const session: PassportSession = {
       eventId: event.id,
       details,
-      stampedBoothIds: stampsReady ? stamped : (prior?.stampedBoothIds ?? []),
+      stampedBoothIds: stampIds,
       submitted,
       personId,
     };
     savePassportSession(session);
-    if (stampsReady) {
-      stampedRef.current = stamped;
-      if (personId) saveStampBoothIds(event.id, personId, stamped);
+    if (stampsReady && ownerMatches && personId) {
+      stampedRef.current = stampIds;
+      saveStampBoothIds(event.id, personId, stampIds);
     }
   }, [event, details, stamped, submitted, personId, stampsReady]);
 
@@ -213,14 +240,17 @@ export function GuestApp() {
     const { auth, db } = getFirebase();
     let cancelled = false;
     const savedIds = loadStampBoothIds(event.id, personId);
-    if (savedIds.length || stampedRef.current.length) {
-      const seeded = mergeStationIds(stampedRef.current, savedIds);
-      stampedRef.current = seeded;
-      setStamped((prev) => mergeStationIds(prev, savedIds));
-      setStampsReady(true);
-    } else {
-      setStampsReady(false);
-    }
+    const seeded = scopedStampBoothIds({
+      booths: event.booths,
+      savedIds,
+      inMemoryIds: stampedRef.current,
+      sameOwner:
+        stampOwnerRef.current?.eventId === event.id && stampOwnerRef.current?.personId === personId,
+    });
+    stampOwnerRef.current = { eventId: event.id, personId };
+    stampedRef.current = seeded;
+    setStamped(seeded);
+    setStampsReady(seeded.length > 0);
     setStampRefreshNote('');
     setSessionLost(false);
 
@@ -243,7 +273,13 @@ export function GuestApp() {
           readStamp: firestoreStampReader(db, event.id),
         });
         if (cancelled) return;
-        const loadedIds = mergeStationIds(savedIds, result.boothIds, stampedRef.current);
+        const loadedIds = scopedStampBoothIds({
+          booths: event.booths,
+          savedIds: mergeStationIds(savedIds, result.boothIds),
+          inMemoryIds: stampedRef.current,
+          sameOwner:
+            stampOwnerRef.current?.eventId === event.id && stampOwnerRef.current?.personId === personId,
+        });
         stampedRef.current = loadedIds;
         setStamped(loadedIds);
         saveStampBoothIds(event.id, personId, loadedIds);
@@ -725,6 +761,8 @@ export function GuestApp() {
                   clearPassportSession(event.id);
                   clearDeviceCheckin(event.id);
                 }
+                stampOwnerRef.current = null;
+                stampedRef.current = [];
                 setDetails(emptyDetails);
                 setStamped([]);
                 setStampsReady(false);

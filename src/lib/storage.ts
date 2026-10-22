@@ -76,7 +76,7 @@ export function loadStampBoothIds(eventId: string, personId: string): string[] {
     // fall through to the passport session
   }
   const session = loadPassportSession(eventId);
-  if (session && (!session.personId || session.personId === personId)) {
+  if (session?.personId === personId) {
     return asStringIds(session.stampedBoothIds) ?? [];
   }
   return [];

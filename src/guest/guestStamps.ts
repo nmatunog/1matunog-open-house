@@ -47,6 +47,19 @@ export function mergeStationIds(...lists: Array<Iterable<string>>): string[] {
   return uniqueStationIds(lists.flatMap((list) => [...list]));
 }
 
+/** Keep in-memory stamps only for the same event+person, and only booths on this event. */
+export function scopedStampBoothIds(args: {
+  booths: { id: string }[];
+  savedIds: Iterable<string>;
+  inMemoryIds?: Iterable<string>;
+  sameOwner: boolean;
+}): string[] {
+  const allowed = new Set(args.booths.map((booth) => booth.id));
+  return mergeStationIds(args.sameOwner ? args.inMemoryIds ?? [] : [], args.savedIds).filter((id) =>
+    allowed.has(id),
+  );
+}
+
 export type StampProgress =
   | { loading: true }
   | { loading: false; boothIds: string[]; doneCount: number };

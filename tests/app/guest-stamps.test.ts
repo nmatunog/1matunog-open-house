@@ -6,6 +6,7 @@ import {
   STAMPS_REFRESH_NOTE,
   loadStampBoothIdsFromDocs,
   mergeStationIds,
+  scopedStampBoothIds,
   stampProgressFromDocs,
   uniqueStationIds,
   waitForGuestUid,
@@ -52,6 +53,25 @@ describe('guest stamp progress from documents', () => {
       'booth-2',
       'booth-4',
     ]);
+  });
+
+  it('does not keep in-memory stamps from another event or person', () => {
+    expect(
+      scopedStampBoothIds({
+        booths: sixBooths,
+        savedIds: ['booth-1'],
+        inMemoryIds: ['booth-2', 'booth-3', 'ghost-booth'],
+        sameOwner: false,
+      }),
+    ).toEqual(['booth-1']);
+    expect(
+      scopedStampBoothIds({
+        booths: sixBooths,
+        savedIds: ['booth-1'],
+        inMemoryIds: ['booth-2', 'ghost-booth'],
+        sameOwner: true,
+      }),
+    ).toEqual(['booth-2', 'booth-1']);
   });
 
   it('hides progress until stamp documents have loaded', () => {

@@ -99,6 +99,16 @@ describe('refresh-keeps-stamps', () => {
     expect(loadStampBoothIds('evt-1', 'p1')).toEqual(['booth-4', 'booth-5']);
   });
 
+  it('does not fall back to another person\'s passport stamps', () => {
+    savePassportSession({ ...sample('evt-1', ['booth-4', 'booth-5']), personId: 'p1' });
+    expect(loadStampBoothIds('evt-1', 'p2')).toEqual([]);
+  });
+
+  it('does not fall back to a passport session that has no personId', () => {
+    savePassportSession(sample('evt-1', ['booth-4']));
+    expect(loadStampBoothIds('evt-1', 'p1')).toEqual([]);
+  });
+
   it('stores the anonymous uid with the device check-in', () => {
     saveDeviceCheckin({ eventId: 'evt-1', personId: 'p1', name: 'Juan', anonUid: 'anon-1' });
     expect(loadDeviceCheckin('evt-1')?.anonUid).toBe('anon-1');

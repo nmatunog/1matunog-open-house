@@ -202,6 +202,17 @@ describe('guest passport keeps saved stamps on refresh', () => {
     expect(screen.queryByText(STAMPS_LOADING_MESSAGE)).toBeNull();
   });
 
+  it('does not seed stamps saved for another event or person', async () => {
+    seedCheckedInGuest();
+    saveStampBoothIds('evt-2', 'person-1', ['booth-1', 'booth-2', 'booth-3']);
+    saveStampBoothIds('evt-1', 'person-2', ['booth-1', 'booth-2']);
+    renderPassport();
+
+    expect(await screen.findByText(STAMPS_LOADING_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText(/3 of 6/)).toBeNull();
+    expect(screen.queryByText(/2 of 6/)).toBeNull();
+  });
+
   it('warns when the anonymous session no longer matches check-in', async () => {
     scenario.currentUser = { uid: 'brand-new-uid' };
     seedCheckedInGuest({ anonUid: 'old-uid', stamps: ['booth-1'] });
