@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { stampDocId } from '../../src/lib/stations';
 import {
+  GUEST_SESSION_LOST_MESSAGE,
   STAMPS_LOADING_MESSAGE,
+  STAMPS_REFRESH_NOTE,
   loadStampBoothIdsFromDocs,
   mergeStationIds,
+  scopedStampBoothIds,
   stampProgressFromDocs,
   uniqueStationIds,
   waitForGuestUid,
@@ -33,6 +36,10 @@ describe('guest stamp progress from documents', () => {
   it('uses the locked loading copy', () => {
     expect(STAMPS_LOADING_MESSAGE).toBe('Loading your stamps…');
     expect(STAMPS_LOADING_MESSAGE).not.toMatch(/\bCMA\b/);
+    expect(STAMPS_REFRESH_NOTE).toBe("Couldn't refresh stamps — showing saved ones.");
+    expect(GUEST_SESSION_LOST_MESSAGE).toBe(
+      'This browser lost your session — open the passport in the same browser you checked in with, or see a host.',
+    );
   });
 
   it('counts unique stations only', () => {
@@ -46,6 +53,25 @@ describe('guest stamp progress from documents', () => {
       'booth-2',
       'booth-4',
     ]);
+  });
+
+  it('does not keep in-memory stamps from another event or person', () => {
+    expect(
+      scopedStampBoothIds({
+        booths: sixBooths,
+        savedIds: ['booth-1'],
+        inMemoryIds: ['booth-2', 'booth-3', 'ghost-booth'],
+        sameOwner: false,
+      }),
+    ).toEqual(['booth-1']);
+    expect(
+      scopedStampBoothIds({
+        booths: sixBooths,
+        savedIds: ['booth-1'],
+        inMemoryIds: ['booth-2', 'ghost-booth'],
+        sameOwner: true,
+      }),
+    ).toEqual(['booth-2', 'booth-1']);
   });
 
   it('hides progress until stamp documents have loaded', () => {
@@ -93,11 +119,13 @@ describe('guest stamp progress from documents', () => {
 
     release();
     const found = await load;
-    expect(found).toEqual(['booth-1', 'booth-2', 'booth-3']);
+    expect(found.boothIds).toEqual(['booth-1', 'booth-2', 'booth-3']);
+    expect(found.failed).toBe(false);
+    expect(found.failedBoothIds).toEqual([]);
 
     const shown = stampProgressFromDocs({
       loaded: true,
-      stampBoothIds: found,
+      stampBoothIds: found.boothIds,
       justAppliedBoothId: 'booth-4',
     });
     expect(shown).toEqual({
@@ -132,7 +160,28 @@ describe('guest stamp progress from documents', () => {
         personId: 'someone-else',
       }),
     });
-    expect(found).toEqual([]);
+    expect(found.boothIds).toEqual([]);
+    expect(found.failed).toBe(false);
+  });
+
+  it('keeps found stamps when some lookups fail', async () => {
+    const found = await loadStampBoothIdsFromDocs({
+      booths: sixBooths,
+      anonUid: 'anon-1',
+      personId: 'p1',
+      readStamp: async (stampId) => {
+        if (stampId.endsWith('booth-3')) throw new Error('permission-denied');
+        const boothId = sixBooths.find((b) => stampDocId('anon-1', b.id) === stampId)?.id;
+        return {
+          exists: boothId === 'booth-1' || boothId === 'booth-2',
+          boothId,
+          personId: 'p1',
+        };
+      },
+    });
+    expect(found.boothIds).toEqual(['booth-1', 'booth-2']);
+    expect(found.failedBoothIds).toEqual(['booth-3']);
+    expect(found.failed).toBe(true);
   });
 });
 
