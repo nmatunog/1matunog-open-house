@@ -109,6 +109,7 @@ export type DeviceCheckin = {
   eventId: string;
   personId: string;
   name: string;
+  anonUid?: string;
 };
 
 export type StationStamp = {

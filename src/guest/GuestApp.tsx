@@ -15,14 +15,17 @@ import {
   clearGuestProfile,
   clearPassportSession,
   clearPendingStationScan,
+  clearStampBoothIds,
   loadDeviceCheckin,
   loadGuestProfile,
   loadPassportSession,
   loadPendingStationScan,
+  loadStampBoothIds,
   saveDeviceCheckin,
   saveGuestProfile,
   savePassportSession,
   savePendingStationScan,
+  saveStampBoothIds,
 } from '../lib/storage';
 import { projectorName } from '../lib/displayName';
 import { formatManilaDate } from '../lib/time';
@@ -30,7 +33,9 @@ import type { GuestDetails, OhEvent, PassportSession } from '../types';
 import { PrivacyNotice } from './PrivacyNotice';
 import { applyStationStamp, needsCheckInBeforeStamp, stampConfirmCopy } from './applyStamp';
 import {
+  GUEST_SESSION_LOST_MESSAGE,
   STAMPS_LOADING_MESSAGE,
+  STAMPS_REFRESH_NOTE,
   firestoreStampReader,
   loadStampBoothIdsFromDocs,
   mergeStationIds,
@@ -79,6 +84,8 @@ export function GuestApp() {
   const [alreadyCheckedIn, setAlreadyCheckedIn] = useState(false);
   const [flash, setFlash] = useState<StampFlash | null>(null);
   const [scanNote, setScanNote] = useState('');
+  const [stampRefreshNote, setStampRefreshNote] = useState('');
+  const [sessionLost, setSessionLost] = useState(false);
   const stampedRef = useRef<string[]>([]);
   const applyKeyRef = useRef<string>('');
   const runStampRef = useRef<(token: string) => Promise<void>>(async () => {});
@@ -113,6 +120,15 @@ export function GuestApp() {
       const saved = loadPassportSession(loaded.id);
       const profile = loadGuestProfile();
       const device = loadDeviceCheckin(loaded.id);
+      const localPersonId = saved?.personId || device?.personId;
+      if (localPersonId) {
+        const localStamps = mergeStationIds(saved?.stampedBoothIds ?? [], loadStampBoothIds(loaded.id, localPersonId));
+        if (localStamps.length) {
+          stampedRef.current = localStamps;
+          setStamped(localStamps);
+          setStampsReady(true);
+        }
+      }
       if (saved) {
         setDetails(saved.details);
         setSubmitted(saved.submitted);
@@ -186,28 +202,54 @@ export function GuestApp() {
       personId,
     };
     savePassportSession(session);
-    if (stampsReady) stampedRef.current = stamped;
+    if (stampsReady) {
+      stampedRef.current = stamped;
+      if (personId) saveStampBoothIds(event.id, personId, stamped);
+    }
   }, [event, details, stamped, submitted, personId, stampsReady]);
 
   useEffect(() => {
     if (!event || !personId) return;
     const { auth, db } = getFirebase();
     let cancelled = false;
-    setStampsReady(false);
+    const savedIds = loadStampBoothIds(event.id, personId);
+    if (savedIds.length || stampedRef.current.length) {
+      const seeded = mergeStationIds(stampedRef.current, savedIds);
+      stampedRef.current = seeded;
+      setStamped((prev) => mergeStationIds(prev, savedIds));
+      setStampsReady(true);
+    } else {
+      setStampsReady(false);
+    }
+    setStampRefreshNote('');
+    setSessionLost(false);
+
     void (async () => {
       try {
         const uid = await waitForGuestUid(auth);
         if (cancelled) return;
-        const found = await loadStampBoothIdsFromDocs({
+        const device = loadDeviceCheckin(event.id);
+        const lostSession = Boolean(device?.anonUid && device.anonUid !== uid);
+        if (lostSession) {
+          setSessionLost(true);
+        } else if (device && !device.anonUid) {
+          saveDeviceCheckin({ ...device, anonUid: uid });
+        }
+
+        const result = await loadStampBoothIdsFromDocs({
           booths: event.booths,
           anonUid: uid,
           personId,
           readStamp: firestoreStampReader(db, event.id),
         });
         if (cancelled) return;
-        const loadedIds = mergeStationIds(found);
+        const loadedIds = mergeStationIds(savedIds, result.boothIds, stampedRef.current);
         stampedRef.current = loadedIds;
         setStamped(loadedIds);
+        saveStampBoothIds(event.id, personId, loadedIds);
+        if (result.failed && !lostSession) {
+          setStampRefreshNote(STAMPS_REFRESH_NOTE);
+        }
 
         const pending = loadPendingStationScan();
         const token = pending?.eventId === event.id ? pending.token : scanToken;
@@ -222,7 +264,7 @@ export function GuestApp() {
         setStampsReady(true);
       } catch {
         if (cancelled) return;
-        setCodeError('Could not load your stamps. Please refresh.');
+        setStampRefreshNote(STAMPS_REFRESH_NOTE);
         setStampsReady(true);
       }
     })();
@@ -295,7 +337,7 @@ export function GuestApp() {
         throw err;
       }
     }
-    saveDeviceCheckin({ eventId: event.id, personId: pid, name: cleaned.name.trim() });
+    saveDeviceCheckin({ eventId: event.id, personId: pid, name: cleaned.name.trim(), anonUid });
     setPersonId(pid);
     setSubmitted(true);
     return pid;
@@ -369,6 +411,7 @@ export function GuestApp() {
       const next = afterWrite.loading ? mergeStationIds(stampedRef.current, [result.boothId]) : afterWrite.boothIds;
       stampedRef.current = next;
       setStamped(next);
+      saveStampBoothIds(event.id, pid, next);
       clearPendingStationScan();
       setShowTyped(false);
       setTypedCode('');
@@ -442,6 +485,8 @@ export function GuestApp() {
           {alreadyCheckedIn ? (
             <p className="text-green-700 font-semibold">You&apos;re already checked in. ✓</p>
           ) : null}
+          {sessionLost ? <p className="text-sm font-medium text-amber-800">{GUEST_SESSION_LOST_MESSAGE}</p> : null}
+          {stampRefreshNote ? <p className="text-sm font-medium text-amber-800">{stampRefreshNote}</p> : null}
           <button
             type="button"
             className="w-full rounded-2xl bg-gray-900 py-3 font-bold text-white"
@@ -554,6 +599,12 @@ export function GuestApp() {
           <p className="text-lg font-semibold">
             Hi, <SafeText value={details.name.split(' ')[0] || 'friend'} />! {doneCount} of {needed} stations
           </p>
+          {sessionLost ? (
+            <p className="rounded-2xl bg-amber-50 p-3 text-sm font-medium text-amber-900">{GUEST_SESSION_LOST_MESSAGE}</p>
+          ) : null}
+          {stampRefreshNote ? (
+            <p className="rounded-2xl bg-amber-50 p-3 text-sm font-medium text-amber-900">{stampRefreshNote}</p>
+          ) : null}
           <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
             <div
               className="h-full rounded-full bg-brand transition-all"
@@ -669,6 +720,8 @@ export function GuestApp() {
               onClick={() => {
                 clearGuestProfile();
                 if (event) {
+                  const pid = personId ?? loadDeviceCheckin(event.id)?.personId;
+                  if (pid) clearStampBoothIds(event.id, pid);
                   clearPassportSession(event.id);
                   clearDeviceCheckin(event.id);
                 }

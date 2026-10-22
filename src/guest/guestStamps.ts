@@ -3,6 +3,9 @@ import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import { stampDocId } from '../lib/stations';
 
 export const STAMPS_LOADING_MESSAGE = 'Loading your stamps…';
+export const STAMPS_REFRESH_NOTE = "Couldn't refresh stamps — showing saved ones.";
+export const GUEST_SESSION_LOST_MESSAGE =
+  'This browser lost your session — open the passport in the same browser you checked in with, or see a host.';
 
 export type StampDocSnap = {
   exists: boolean;
@@ -79,14 +82,20 @@ export function firestoreStampReader(db: Firestore, eventId: string): StampDocRe
   };
 }
 
+export type StampLoadResult = {
+  boothIds: string[];
+  failedBoothIds: string[];
+  failed: boolean;
+};
+
 /** One get-by-id per station (`{anonUid}_{boothId}`). Never a collection list. */
 export async function loadStampBoothIdsFromDocs(args: {
   booths: { id: string }[];
   anonUid: string;
   personId: string;
   readStamp: StampDocReader;
-}): Promise<string[]> {
-  const rows = await Promise.all(
+}): Promise<StampLoadResult> {
+  const settled = await Promise.allSettled(
     args.booths.map(async (booth) => {
       const snap = await args.readStamp(stampDocId(args.anonUid, booth.id));
       if (!snap.exists) return null;
@@ -94,5 +103,21 @@ export async function loadStampBoothIdsFromDocs(args: {
       return booth.id;
     }),
   );
-  return uniqueStationIds(rows.filter((id): id is string => Boolean(id)));
+
+  const boothIds: string[] = [];
+  const failedBoothIds: string[] = [];
+  settled.forEach((result, index) => {
+    const boothId = args.booths[index]?.id;
+    if (result.status === 'rejected') {
+      if (boothId) failedBoothIds.push(boothId);
+      return;
+    }
+    if (result.value) boothIds.push(result.value);
+  });
+
+  return {
+    boothIds: uniqueStationIds(boothIds),
+    failedBoothIds: uniqueStationIds(failedBoothIds),
+    failed: failedBoothIds.length > 0,
+  };
 }
