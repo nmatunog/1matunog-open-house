@@ -515,7 +515,7 @@ function TodayScreen({
           previousValue: !next,
           newValue: next,
           changedAt: serverTimestamp(),
-          changedBy: getFirebase().auth.currentUser?.email ?? 'unknown',
+          changedBy: getFirebase().auth.currentUser?.email?.toLowerCase() ?? 'unknown',
         });
       });
     } catch (err) {
