@@ -51,6 +51,7 @@ function asEvent(id: string, data: Record<string, unknown>): OhEvent {
     },
     booths: Array.isArray(data.booths) ? (data.booths as OhEvent['booths']) : [],
     status: data.status as OhEvent['status'],
+    boothScanRequirementSuspended: data.boothScanRequirementSuspended === true,
     createdBy: String(data.createdBy ?? ''),
     pendingDrawNo: (data.pendingDrawNo as number | null | undefined) ?? null,
     lastDrawNo: Number(data.lastDrawNo ?? 0),
