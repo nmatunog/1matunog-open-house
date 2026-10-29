@@ -508,14 +508,18 @@ function TodayScreen({
         const data = current.data();
         if (data.pendingDrawNo != null) throw new Error('Finish the current winner before changing requirements.');
         if ((data.boothScanRequirementSuspended === true) !== !next) throw new Error('Setting changed in another session. Refresh and try again.');
-        tx.update(eventRef, { boothScanRequirementSuspended: next });
-        const auditRef = doc(collection(db, 'oh_events', event.id, 'settingChanges'));
-        tx.set(auditRef, {
-          field: 'boothScanRequirementSuspended',
-          previousValue: !next,
-          newValue: next,
-          changedAt: serverTimestamp(),
-          changedBy: getFirebase().auth.currentUser?.email?.toLowerCase() ?? 'unknown',
+        const previousAudit = Array.isArray(data.boothScanRequirementAudit) ? data.boothScanRequirementAudit : [];
+        tx.update(eventRef, {
+          boothScanRequirementSuspended: next,
+          boothScanRequirementAudit: [
+            ...previousAudit.slice(-49),
+            {
+              previousValue: !next,
+              newValue: next,
+              changedAt: Timestamp.now(),
+              changedBy: getFirebase().auth.currentUser?.email?.toLowerCase() ?? 'unknown',
+            },
+          ],
         });
       });
     } catch (err) {
