@@ -27,6 +27,19 @@ service cloud.firestore {
       allow read: if true;
       allow write: if ohIsAdmin();
 
+      match /settingChanges/{changeId} {
+        allow read: if ohIsViewer();
+        allow create: if ohIsAdmin()
+          && request.resource.data.keys().hasOnly(['field', 'previousValue', 'newValue', 'changedAt', 'changedBy'])
+          && request.resource.data.field == 'boothScanRequirementSuspended'
+          && request.resource.data.previousValue is bool
+          && request.resource.data.newValue is bool
+          && request.resource.data.previousValue != request.resource.data.newValue
+          && request.resource.data.changedAt == request.time
+          && request.resource.data.changedBy == ohEmail();
+        allow update, delete: if false;
+      }
+
       match /checkins/{pid} {
         allow read: if ohIsViewer();
         allow create: if ohSignedIn()
