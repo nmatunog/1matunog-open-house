@@ -55,6 +55,22 @@ function checkin(id: string, stamps = 6): Checkin {
 }
 
 describe('live raffle eligibility', () => {
+  it('allows a checked-in guest without stamps only when scan requirement is suspended', () => {
+    const suspended = { ...event, boothScanRequirementSuspended: true };
+    expect(isEligibleToWin(checkin('a', 0), event, undefined, 0)).toBe(false);
+    expect(isEligibleToWin(checkin('a', 0), suspended, undefined, 0)).toBe(true);
+    expect(eligiblePool([checkin('a', 0)], suspended, new Map(), new Map()).length).toBe(1);
+    expect(isEligibleToWin({ ...checkin('a'), checkedInAt: undefined as unknown as Timestamp }, suspended, undefined, 0)).toBe(false);
+  });
+
+  it('keeps winner exclusions in suspended mode', () => {
+    const suspended = { ...event, boothScanRequirementSuspended: true };
+    const claimed: WinnerLock = { personId: 'a', drawNo: 1, status: 'claimed' };
+    const pending: WinnerLock = { personId: 'a', drawNo: 1, status: 'pending' };
+    expect(isEligibleToWin(checkin('a'), suspended, claimed, 0)).toBe(false);
+    expect(isEligibleToWin(checkin('a'), suspended, pending, 0)).toBe(false);
+  });
+
   it('needs a unique stamp at every station, from stamp documents', () => {
     expect(stationsNeeded(event)).toBe(6);
     expect(isEligibleToWin(checkin('a', 6), event, undefined, 5)).toBe(false);

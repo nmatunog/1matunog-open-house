@@ -51,6 +51,7 @@ function asEvent(id: string, data: Record<string, unknown>): OhEvent {
     },
     booths: Array.isArray(data.booths) ? (data.booths as OhEvent['booths']) : [],
     status: data.status as OhEvent['status'],
+    boothScanRequirementSuspended: data.boothScanRequirementSuspended === true,
     createdBy: String(data.createdBy ?? ''),
     pendingDrawNo: (data.pendingDrawNo as number | null | undefined) ?? null,
     lastDrawNo: Number(data.lastDrawNo ?? 0),
@@ -143,6 +144,10 @@ export async function drawAndLock(
         if (event.pendingDrawNo != null) {
           return { ok: false, reason: 'pending' } as const;
         }
+        // A changed eligibility mode invalidates a pool computed before this transaction.
+        if (event.boothScanRequirementSuspended !== live.event.boothScanRequirementSuspended) {
+          return { ok: false, reason: 'conflict' } as const;
+        }
         const winnerRef = doc(db, 'oh_events', eventId, 'winners', pick.personId);
         const winnerSnap = await tx.get(winnerRef);
         if (winnerSnap.exists()) {
@@ -166,6 +171,7 @@ export async function drawAndLock(
           drawnAt: serverTimestamp(),
           drawnBy,
           status: 'pending',
+          eligibilityMode: event.boothScanRequirementSuspended === true ? 'checkin_only' : 'stations_required',
           resolvedAt: null,
         });
         if (winnerSnap.exists()) {

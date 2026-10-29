@@ -14,6 +14,7 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -51,6 +52,7 @@ import { AdminLoadError, AdminLoading, GuestListEmpty, HistoryEmpty, NoEventToda
 import { eventsFromSnapshot, readAdminRole } from './eventsFromSnapshot';
 import { PrintStationCards } from './PrintStationCards';
 import { ProjectorReel } from './ProjectorReel';
+import { CentralCheckinQr } from './CentralCheckinQr';
 
 type Screen = 'today' | 'list' | 'guest' | 'history' | 'new' | 'more';
 
@@ -488,6 +490,42 @@ function TodayScreen({
 }) {
   const open = eventCheckInOpen(event);
   const [rotateNote, setRotateNote] = useState('');
+  const [overrideError, setOverrideError] = useState('');
+  const [overrideBusy, setOverrideBusy] = useState(false);
+  async function toggleBoothRequirement() {
+    if (!isAdmin || overrideBusy || pending) return;
+    const next = event.boothScanRequirementSuspended !== true;
+    if (!confirm(next
+      ? 'Suspend station scans? All checked-in guests will enter the raffle, subject to existing winner restrictions.'
+      : 'Restore station scans? Only guests completing every station will enter the raffle.')) return;
+    setOverrideBusy(true); setOverrideError('');
+    try {
+      const db = getFirebase().db;
+      await runTransaction(db, async (tx) => {
+        const eventRef = doc(db, 'oh_events', event.id);
+        const current = await tx.get(eventRef);
+        if (!current.exists()) throw new Error('Event not found');
+        const data = current.data();
+        if (data.pendingDrawNo != null) throw new Error('Finish the current winner before changing requirements.');
+        if ((data.boothScanRequirementSuspended === true) !== !next) throw new Error('Setting changed in another session. Refresh and try again.');
+        const previousAudit = Array.isArray(data.boothScanRequirementAudit) ? data.boothScanRequirementAudit : [];
+        tx.update(eventRef, {
+          boothScanRequirementSuspended: next,
+          boothScanRequirementAudit: [
+            ...previousAudit.slice(-49),
+            {
+              previousValue: !next,
+              newValue: next,
+              changedAt: Timestamp.now(),
+              changedBy: getFirebase().auth.currentUser?.email?.toLowerCase() ?? 'unknown',
+            },
+          ],
+        });
+      });
+    } catch (err) {
+      setOverrideError(err instanceof Error ? err.message : 'Could not change station requirement');
+    } finally { setOverrideBusy(false); }
+  }
   async function setCurrent() {
     await setDoc(doc(getFirebase().db, 'oh_config', 'public'), { currentEventId: event.id }, { merge: true });
   }
@@ -532,6 +570,14 @@ function TodayScreen({
       <div className="grid grid-cols-2 gap-3">
         <Stat label="Checked in" value={String(checkins.length)} />
         <Stat label="Can win now" value={String(canWinCount)} />
+      </div>
+      {isAdmin ? <CentralCheckinQr eventIsPublic={event.id === currentId} eventName={event.name} /> : null}
+      <div className="rounded-2xl bg-white p-4 shadow">
+        <h2 className="font-bold">Raffle booth scan requirement</h2>
+        <p className="mt-1 text-sm">{event.boothScanRequirementSuspended === true ? 'SUSPENDED — checked-in guests qualify without station scans.' : 'ACTIVE — all station scans required.'}</p>
+        {isAdmin ? <button type="button" disabled={overrideBusy || Boolean(pending)} onClick={() => void toggleBoothRequirement()} className="mt-3 rounded-xl bg-gray-900 px-4 py-3 text-sm font-bold text-white disabled:opacity-50">{overrideBusy ? 'Saving…' : event.boothScanRequirementSuspended === true ? 'Restore scan requirement' : 'Suspend scan requirement'}</button> : null}
+        {pending ? <p className="text-sm text-amber-700">Finish the current winner before changing the requirement.</p> : null}
+        {overrideError ? <p role="alert" className="text-sm text-red-700">{overrideError}</p> : null}
       </div>
       <div className="rounded-2xl bg-white p-4 shadow">
         <p className="text-xs uppercase tracking-widest text-gray-500">Stamps per station</p>

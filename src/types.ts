@@ -28,6 +28,7 @@ export type OhEvent = {
   raffle: RaffleConfig;
   booths: Booth[];
   status: EventStatus;
+  boothScanRequirementSuspended?: boolean;
   createdBy: string;
   pendingDrawNo: number | null;
   lastDrawNo: number;

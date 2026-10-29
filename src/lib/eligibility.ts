@@ -33,11 +33,14 @@ export function isEligibleToWin(
   uniqueStations: number,
 ): boolean {
   if (!checkin.personId) return false;
-  const needed = stationsNeeded(event);
-  if (needed <= 0) return false;
-  // Count unique stamp-document stations for this person and event — never
-  // checkins.stampsCompleted, and never whether they checked in inside the raffle window.
-  if (uniqueStations < needed) return false;
+  // A persisted check-in is mandatory in both modes. Only station completion is bypassed.
+  if (!checkin.checkedInAt) return false;
+  if (event.boothScanRequirementSuspended !== true) {
+    const needed = stationsNeeded(event);
+    if (needed <= 0) return false;
+    // Use unique station stamp documents, never the cached stampsCompleted counter.
+    if (uniqueStations < needed) return false;
+  }
   if (!winner) return true;
   if (winner.status === 'no_show' || winner.status === 'pending' || winner.status === 'void') {
     return false;
