@@ -14,6 +14,7 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -499,7 +500,24 @@ function TodayScreen({
       : 'Restore station scans? Only guests completing every station will enter the raffle.')) return;
     setOverrideBusy(true); setOverrideError('');
     try {
-      await updateDoc(doc(getFirebase().db, 'oh_events', event.id), { boothScanRequirementSuspended: next });
+      const db = getFirebase().db;
+      await runTransaction(db, async (tx) => {
+        const eventRef = doc(db, 'oh_events', event.id);
+        const current = await tx.get(eventRef);
+        if (!current.exists()) throw new Error('Event not found');
+        const data = current.data();
+        if (data.pendingDrawNo != null) throw new Error('Finish the current winner before changing requirements.');
+        if ((data.boothScanRequirementSuspended === true) !== !next) throw new Error('Setting changed in another session. Refresh and try again.');
+        tx.update(eventRef, { boothScanRequirementSuspended: next });
+        const auditRef = doc(collection(db, 'oh_events', event.id, 'settingChanges'));
+        tx.set(auditRef, {
+          field: 'boothScanRequirementSuspended',
+          previousValue: !next,
+          newValue: next,
+          changedAt: serverTimestamp(),
+          changedBy: getFirebase().auth.currentUser?.email ?? 'unknown',
+        });
+      });
     } catch (err) {
       setOverrideError(err instanceof Error ? err.message : 'Could not change station requirement');
     } finally { setOverrideBusy(false); }
