@@ -144,6 +144,10 @@ export async function drawAndLock(
         if (event.pendingDrawNo != null) {
           return { ok: false, reason: 'pending' } as const;
         }
+        // A changed eligibility mode invalidates a pool computed before this transaction.
+        if (event.boothScanRequirementSuspended !== live.event.boothScanRequirementSuspended) {
+          return { ok: false, reason: 'conflict' } as const;
+        }
         const winnerRef = doc(db, 'oh_events', eventId, 'winners', pick.personId);
         const winnerSnap = await tx.get(winnerRef);
         if (winnerSnap.exists()) {
@@ -167,6 +171,7 @@ export async function drawAndLock(
           drawnAt: serverTimestamp(),
           drawnBy,
           status: 'pending',
+          eligibilityMode: event.boothScanRequirementSuspended === true ? 'checkin_only' : 'stations_required',
           resolvedAt: null,
         });
         if (winnerSnap.exists()) {
