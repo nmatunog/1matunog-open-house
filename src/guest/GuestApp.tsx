@@ -309,6 +309,8 @@ export function GuestApp() {
     };
   }, [event, personId, scanToken]);
 
+  const scansSuspended = event?.boothScanRequirementSuspended === true;
+  const registrationComplete = scansSuspended && submitted && Boolean(personId);
   const open = event ? eventCheckInOpen(event) : false;
   const needed = event?.booths.length ?? 0;
   const progress = stampProgressFromDocs({ loaded: stampsReady, stampBoothIds: stamped });
@@ -494,7 +496,7 @@ export function GuestApp() {
     );
   }
 
-  if (event && personId && !stampsReady && (step === 'passport' || step === 'done')) {
+  if (!registrationComplete && event && personId && !stampsReady && (step === 'passport' || step === 'done')) {
     return (
       <Shell>
         <Header subtitle={headerDate} />
@@ -505,7 +507,7 @@ export function GuestApp() {
     );
   }
 
-  if (step === 'done' && event) {
+  if ((step === 'done' || registrationComplete) && event) {
     return (
       <Shell>
         <Header subtitle={headerDate} />
@@ -514,7 +516,8 @@ export function GuestApp() {
             <p className="text-sm uppercase tracking-widest opacity-80">You&apos;re checked in!</p>
             <SafeText as="h2" className="mt-2 text-3xl font-black" value={projectorName(details.name || 'Guest')} />
             <p className="mt-2 text-sm">
-              {formatManilaDate(event.eventDate)} · {doneCount}/{needed} stations
+              {formatManilaDate(event.eventDate)}
+              {!scansSuspended ? ` · ${doneCount}/${needed} stations` : ''}
             </p>
           </div>
           <p className="text-gray-700 font-medium">Show this screen at the rewards counter.</p>
@@ -523,13 +526,13 @@ export function GuestApp() {
           ) : null}
           {sessionLost ? <p className="text-sm font-medium text-amber-800">{GUEST_SESSION_LOST_MESSAGE}</p> : null}
           {stampRefreshNote ? <p className="text-sm font-medium text-amber-800">{stampRefreshNote}</p> : null}
-          <button
+          {!scansSuspended ? <button
             type="button"
             className="w-full rounded-2xl bg-gray-900 py-3 font-bold text-white"
             onClick={() => setStep('passport')}
           >
             Back to my passport
-          </button>
+          </button> : null}
         </div>
         {flash ? <StampFlashCard flash={flash} onClose={() => setFlash(null)} /> : null}
       </Shell>
